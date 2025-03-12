@@ -19,6 +19,7 @@ import org.apache.lucene.util.InfoStream;
 import org.apache.lucene.util.RamUsageEstimator;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -99,6 +100,25 @@ class NativeEngineFieldVectorsWriter<T> extends KnnFieldVectorsWriter<T> {
         flatFieldVectorsWriter.addValue(docID, vectorValue);
         vectors.put(docID, vectorValue);
         lastDocID = docID;
+
+        if(vectorValue instanceof float[]) {
+            float[] vector = (float[]) vectorValue;
+            int dim = vector.length;
+            float[] meanVector = new float[dim];
+            int count = vectors.size();
+
+            Arrays.fill(meanVector, 0);
+            for(T v : vectors.values()) {
+                float[] vec = (float[]) v;
+                for(int i = 0; i < dim; i++) {
+                    meanVector[i] += vec[i];
+                }
+            }
+            for(int i = 0; i < dim; i++) {
+                meanVector[i] /= count;
+            }
+            System.out.println("Per-dimension mean: " + Arrays.toString(meanVector));
+        }
     }
 
     /**
