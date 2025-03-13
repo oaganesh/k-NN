@@ -119,7 +119,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                     try {
                         float[] meanVector = VectorProfiler.calculateMeanVector(vectorCollection);
                         log.info("Vector statistics for field {}: ", fieldInfo.getName());
-                        VectorProfiler.printMeanVectorStats(meanVector);
+                        VectorProfiler.saveMeanVectorStats(segmentWriteState, meanVector);
                     } catch (IllegalArgumentException e) {
                         log.warn("Failed to calculate vector statistics for field {}: {}",
                                 fieldInfo.getName(), e.getMessage());
