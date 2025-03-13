@@ -34,7 +34,9 @@ import org.opensearch.knn.quantization.models.quantizationState.QuantizationStat
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Supplier;
 
 import static org.opensearch.knn.common.FieldInfoExtractor.extractVectorDataType;
@@ -101,6 +103,30 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                 log.debug("[Flush] No live docs for field {}", fieldInfo.getName());
                 continue;
             }
+
+            Map<?, ?> vectors = field.getVectors();
+            if (!vectors.isEmpty()) {
+                Object firstValue = vectors.values().iterator().next();
+                if (firstValue instanceof float[]) {
+                    log.info("Calculating vector statistics for field: {}", fieldInfo.getName());
+
+                    // Convert vectors to the correct type
+                    Collection<float[]> vectorCollection = new ArrayList<>();
+                    for (Object v : vectors.values()) {
+                        vectorCollection.add((float[]) v);
+                    }
+
+                    try {
+                        float[] meanVector = VectorProfiler.calculateMeanVector(vectorCollection);
+                        log.info("Vector statistics for field {}: ", fieldInfo.getName());
+                        VectorProfiler.printMeanVectorStats(meanVector);
+                    } catch (IllegalArgumentException e) {
+                        log.warn("Failed to calculate vector statistics for field {}: {}",
+                                fieldInfo.getName(), e.getMessage());
+                    }
+                }
+            }
+
             final Supplier<KNNVectorValues<?>> knnVectorValuesSupplier = getVectorValuesSupplier(
                 vectorDataType,
                 field.getFlatFieldVectorsWriter().getDocsWithFieldSet(),

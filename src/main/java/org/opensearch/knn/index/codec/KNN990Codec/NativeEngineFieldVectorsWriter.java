@@ -19,7 +19,8 @@ import org.apache.lucene.util.InfoStream;
 import org.apache.lucene.util.RamUsageEstimator;
 
 import java.io.IOException;
-import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -101,24 +102,35 @@ class NativeEngineFieldVectorsWriter<T> extends KnnFieldVectorsWriter<T> {
         vectors.put(docID, vectorValue);
         lastDocID = docID;
 
-        if(vectorValue instanceof float[]) {
-            float[] vector = (float[]) vectorValue;
-            int dim = vector.length;
-            float[] meanVector = new float[dim];
-            int count = vectors.size();
+//        if(vectorValue instanceof float[]) {
+//            float[] vector = (float[]) vectorValue;
+//            int dim = vector.length;
+//            float[] meanVector = new float[dim];
+//            int count = vectors.size();
+//
+//            Arrays.fill(meanVector, 0);
+//            for(T v : vectors.values()) {
+//                float[] vec = (float[]) v;
+//                for(int i = 0; i < dim; i++) {
+//                    meanVector[i] += vec[i];
+//                }
+//            }
+//            for(int i = 0; i < dim; i++) {
+//                meanVector[i] /= count;
+//            }
+//            System.out.println("Per-dimension mean: " + Arrays.toString(meanVector));
+//        }
 
-            Arrays.fill(meanVector, 0);
-            for(T v : vectors.values()) {
-                float[] vec = (float[]) v;
-                for(int i = 0; i < dim; i++) {
-                    meanVector[i] += vec[i];
-                }
-            }
-            for(int i = 0; i < dim; i++) {
-                meanVector[i] /= count;
-            }
-            System.out.println("Per-dimension mean: " + Arrays.toString(meanVector));
-        }
+//        if (vectorValue instanceof float[]) {
+//            Collection<float[]> vectorCollection = new ArrayList<>();
+//            for (T v : vectors.values()) {
+//                vectorCollection.add((float[]) v);
+//            }
+//
+//            float[] meanVector = VectorProfiler.calculateMeanVector(vectorCollection);
+//            VectorProfiler.printMeanVectorStats(meanVector);
+//        }
+
     }
 
     /**
