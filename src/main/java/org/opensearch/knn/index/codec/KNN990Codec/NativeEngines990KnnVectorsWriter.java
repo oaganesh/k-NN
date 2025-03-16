@@ -31,7 +31,6 @@ import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
 import org.opensearch.knn.plugin.stats.KNNGraphValue;
 import org.opensearch.knn.quantization.models.quantizationParams.QuantizationParams;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
-
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -118,7 +117,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
 
                     try {
                         float[] meanVector = VectorProfiler.calculateMeanVector(vectorCollection);
-                        log.info("Vector statistics for field {}: ", fieldInfo.getName());
+                        log.info("Vector statistics for field {}: ", fieldInfo.getName(), meanVector);
                         VectorProfiler.saveMeanVectorStats(segmentWriteState, meanVector);
                     } catch (IllegalArgumentException e) {
                         log.warn("Failed to calculate vector statistics for field {}: {}",

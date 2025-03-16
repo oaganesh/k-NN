@@ -6,9 +6,13 @@
 package org.opensearch.knn.index.codec.KNN990Codec;
 
 import org.apache.lucene.codecs.CodecUtil;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.store.*;
 import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.SegmentWriteState;
+import org.apache.lucene.index.LeafReaderContext;
+import org.opensearch.knn.index.query.KNNWeight;
+import org.apache.lucene.index.LeafReaderContext;
 
 
 import java.io.DataOutputStream;
@@ -17,6 +21,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 //import java.nio.file.Path;
 import org.apache.lucene.store.FSDirectory;
+import org.opensearch.index.mapper.ObjectMapper;
+import org.opensearch.knn.index.query.KNNWeight;
+
 import java.nio.file.Path;
 
 import java.nio.file.Path;
@@ -57,6 +64,50 @@ public class VectorProfiler {
             }
 
             return meanVector;
+        }
+
+        public static float[] computeMeanAndLogSearch(List<LeafReaderContext> segmentContexts, SegmentWriteState segmentWriteState) throws IOException {
+            List<float[]> allVectors = new ArrayList<>();
+            List<float[]> searchedVectors = new ArrayList<>();
+
+            for(LeafReaderContext context : segmentContexts) {
+                KNNWeight knnWeight = new KNNWeight(null, 1.0f);
+                //KNNWeight.PerLeafResult result = knnWeight.searchLeaf(context, 10);
+                Map<Integer, Float> docIdToScoreMap = (Map<Integer, Float>) knnWeight.searchLeaf(context, 10);
+                //KNNWeight.PerLeafResult result = knnWeight.searchLeaf(context, 10);
+
+                for (Integer docId : docIdToScoreMap.keySet()) {
+                    searchedVectors.add(knnWeight.getVectorForDoc(context, docId));
+                    allVectors.add(knnWeight.getVectorForDoc(context, docId));
+                }
+            }
+            logSearchActivity("global_search", searchedVectors);
+            saveMeanVectorStats(segmentWriteState, calculateMeanVector(allVectors));
+
+            return calculateMeanVector(allVectors);
+        }
+
+        public static void logSearchActivity(String segmentName, List<float[]> searchedVectors) throws IOException {
+            if (searchedVectors.isEmpty()) {
+                return;
+            }
+
+            Path searchLogDir = Paths.get("search_logs");
+            Files.createDirectories(searchLogDir);
+
+            Path searchStatsFile = searchLogDir.resolve(segmentName + "_search_stats.txt");
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("Timestamp: ").append(System.currentTimeMillis()).append("\n");
+            sb.append("Search Vectors (sampled):\n");
+            for (float[] vector : searchedVectors) {
+                sb.append(Arrays.toString(vector)).append("\n");
+            }
+
+            Files.write(searchStatsFile, sb.toString().getBytes(StandardCharsets.UTF_8),
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+
+            System.out.println("Logged search activity for segment: " + segmentName);
         }
 
         /**
@@ -170,28 +221,58 @@ public class VectorProfiler {
 //    }
 
 
+//        public static void saveMeanVectorStats(SegmentWriteState segmentWriteState, float[] meanVector) throws IOException {
+//            String meanVectorFileName = IndexFileNames.segmentFileName(
+//                    segmentWriteState.segmentInfo.name,
+//                    segmentWriteState.segmentSuffix,
+//                    "vmf"
+//            );
+//            try (IndexOutput output = segmentWriteState.directory.createOutput(meanVectorFileName, segmentWriteState.context)) {
+//                CodecUtil.writeIndexHeader(output, "MEAN_VECTOR_STATS", 1, segmentWriteState.segmentInfo.getId(), segmentWriteState.segmentSuffix);
+//                output.writeInt(meanVector.length);
+//                for (float value : meanVector) {
+//                    output.writeInt(Float.floatToIntBits(value));
+//                }
+//               // output.writeInt(meanVector.length);
+//                CodecUtil.writeFooter(output);
+//
+//                System.out.println("Mean vector stats saved to: " + meanVectorFileName);
+//
+//                flushSegment(segmentWriteState, meanVectorFileName);
+//            }
+//        }
+
         public static void saveMeanVectorStats(SegmentWriteState segmentWriteState, float[] meanVector) throws IOException {
             String meanVectorFileName = IndexFileNames.segmentFileName(
                     segmentWriteState.segmentInfo.name,
                     segmentWriteState.segmentSuffix,
-                    "vmf"
+                    "txt"
             );
-            try (IndexOutput output = segmentWriteState.directory.createOutput(meanVectorFileName, segmentWriteState.context)) {
-                CodecUtil.writeIndexHeader(output, "MEAN_VECTOR_STATS", 1, segmentWriteState.segmentInfo.getId(), segmentWriteState.segmentSuffix);
-                output.writeInt(meanVector.length);
-                for (float value : meanVector) {
-                    output.writeInt(Float.floatToIntBits(value));
-                }
-               // output.writeInt(meanVector.length);
-                CodecUtil.writeFooter(output);
 
-                System.out.println("Mean vector stats saved to: " + meanVectorFileName);
-
-                flushSegment(segmentWriteState, meanVectorFileName);
+            //Path meanStatsFile = segmentWriteState.directory.toPath().resolve(meanVectorFileName);
+            Directory directory = segmentWriteState.directory;
+            while(directory instanceof FilterDirectory) {
+                directory = ((FilterDirectory) directory).getDelegate();
             }
 
+            if(!(directory instanceof FSDirectory)) {
+                throw new IOException("Expected FSDirectory but found " + directory.getClass().getSimpleName());
+            }
 
-        }
+            Path directoryPath = ((FSDirectory) directory).getDirectory();
+            Path meanStatsFile = directoryPath.resolve(meanVectorFileName);
+
+            Files.createDirectories(meanStatsFile.getParent());
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("Mean Vector Stats:\n");
+            for (float value : meanVector) {
+                sb.append(value).append(" ");
+            }
+            Files.write(meanStatsFile, sb.toString().getBytes(StandardCharsets.UTF_8), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            System.out.println("Mean vector stats saved to" + meanStatsFile);
+            }
+
 
 //        public static void saveMeanVectorStats(SegmentWriteState segmentWriteState, float[] meanVector) throws IOException {
 //            String meanVectorFileName = IndexFileNames.segmentFileName(
@@ -204,28 +285,25 @@ public class VectorProfiler {
 //                CodecUtil.writeIndexHeader(output, "MEAN_VECTOR_STATS", 1, segmentWriteState.segmentInfo.getId(), segmentWriteState.segmentSuffix);
 //
 //                StringBuilder jsonOutput = new StringBuilder();
-//                    jsonOutput.append("{\n  \"mean_vector\": [");
-//                        for(int i = 0; i < meanVector.length; i++) {
-//                            jsonOutput.append(meanVector[i]);
-//                            if (i < meanVector.length - 1) {
-//                                jsonOutput.append(", ");
-//                            }
-//                        }
+//                jsonOutput.append("{\n  \"mean_vector\": [");
+//                for (int i = 0; i < meanVector.length; i++) {
+//                    jsonOutput.append(meanVector[i]);
+//                    if (i < meanVector.length - 1) {
+//                        jsonOutput.append(", ");
+//                    }
+//                }
 //
-//                        jsonOutput.append("]\n}");
-//                        byte[] jsonBytes = jsonOutput.toString().getBytes(StandardCharsets.UTF_8);
-//                        output.writeBytes(jsonBytes, jsonBytes.length);
-//               // output.writeInt(meanVector.length);
+//                jsonOutput.append("]\n}");
+//                byte[] jsonBytes = jsonOutput.toString().getBytes(StandardCharsets.UTF_8);
+//                output.writeBytes(jsonBytes, jsonBytes.length);
+//                // output.writeInt(meanVector.length);
 //
-//               CodecUtil.writeFooter(output);
-//
+//                CodecUtil.writeFooter(output);
 //                System.out.println("Mean vector stats saved to: " + meanVectorFileName);
 //
-//                flushSegment(segmentWriteState, meanVectorFileName);
-//
-//            } catch (IOException e) {
-//                e.printStackTrace();
 //            }
+//
+//                flushSegment(segmentWriteState, meanVectorFileName);
 //
 //        }
 
