@@ -9,6 +9,7 @@ import com.google.common.annotations.VisibleForTesting;
 import lombok.Getter;
 import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.index.FieldInfo;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SegmentReader;
 import org.apache.lucene.search.DocIdSetIterator;
@@ -17,6 +18,9 @@ import org.apache.lucene.search.FilteredDocIdSetIterator;
 import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.ScorerSupplier;
 import org.apache.lucene.search.Weight;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.store.FilterDirectory;
 import org.apache.lucene.util.BitSet;
 import org.apache.lucene.util.BitSetIterator;
 import org.apache.lucene.util.Bits;
@@ -29,6 +33,8 @@ import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.index.KNNSettings;
 import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.VectorDataType;
+import org.opensearch.knn.index.codec.KNN990Codec.SegmentSearchProfiler;
+import org.opensearch.knn.index.codec.KNN990Codec.VectorProfiler;
 import org.opensearch.knn.index.codec.util.KNNCodecUtil;
 import org.opensearch.knn.index.codec.util.NativeMemoryCacheKeyHelper;
 import org.opensearch.knn.index.memory.NativeMemoryAllocation;
@@ -43,13 +49,13 @@ import org.opensearch.knn.indices.ModelMetadata;
 import org.opensearch.knn.indices.ModelUtil;
 import org.opensearch.knn.jni.JNIService;
 import org.opensearch.knn.plugin.stats.KNNCounter;
+import org.opensearch.knn.index.codec.KNN990Codec.VectorProfiler;
 
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
+import java.nio.file.Path;
+import java.util.*;
+import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
@@ -148,6 +154,8 @@ public class KNNWeight extends Weight {
     public PerLeafResult searchLeaf(LeafReaderContext context, int k) throws IOException {
         final SegmentReader reader = Lucene.segmentReader(context.reader());
         final String segmentName = reader.getSegmentName();
+        final String segBaseName = reader.getSegmentInfo().info.name;
+        final String segSuffix = Arrays.toString(reader.getSegmentInfo().info.getId());
 
         StopWatch stopWatch = startStopWatch();
         final BitSet filterBitSet = getFilteredDocsBitSet(context);
@@ -155,6 +163,7 @@ public class KNNWeight extends Weight {
 
         final int maxDoc = context.reader().maxDoc();
         int cardinality = filterBitSet.cardinality();
+
         // We don't need to go to JNI layer if no documents are found which satisfy the filters
         // We should give this condition a deeper look that where it should be placed. For now I feel this is a good
         // place,
@@ -189,7 +198,67 @@ public class KNNWeight extends Weight {
             Map<Integer, Float> result = doExactSearch(context, docs, cardinality, k);
             return new PerLeafResult(filterWeight == null ? null : filterBitSet, result);
         }
+
+        Directory directory = reader.directory();
+        while (directory instanceof FilterDirectory) {
+            directory = ((FilterDirectory) directory).getDelegate();
+        }
+        Path directoryPath = null;
+        if (directory instanceof FSDirectory) {
+            directoryPath = ((FSDirectory) directory).getDirectory();
+            System.out.println("Segment is stored in FSDirectory at path: " + directoryPath);
+        } else {
+            return PerLeafResult.EMPTY_RESULT;
+        }
+//        if(!(directory instanceof FSDirectory)) {
+//            return PerLeafResult.EMPTY_RESULT;
+//        }
+        //Path directoryPath = ((FSDirectory) directory).getDirectory();
+        //Map<Integer, Float> docIdsToScoreMap = doANNSearch(reader, context, filterBitSet, cardinality, k);
+//        if(isExactSearchRequire(context, cardinality, docIdsToScoreMap.size())) {
+//            docIdsToScoreMap = doExactSearch(context, new BitSetIterator(filterBitSet, cardinality), cardinality, k);
+//
+//        }
+
+        float[] queryVec = knnQuery.getQueryVector();
+        if (directoryPath != null && queryVec != null && queryVec.length > 0) {
+            System.out.println("Recording query vector for segment: " + segmentName);
+            VectorProfiler.recordReadTimeVectors(segBaseName, segSuffix, directoryPath, Collections.singletonList(queryVec));
+        }
+
+        //Map<Integer, Float> docIdToScoreMap = myKnnSearchLogic(context, k);
+        // Map<Integer, Float> docIdToScoreMap = doANNSearchOrExactSearch(...);
+        if(directoryPath != null && !docIdsToScoreMap.isEmpty()) {
+            System.out.println("Fetching and recording top-K doc vectors for segment: " + segmentName);
+            List<float[]> topDocVectors = fetchDocVectors(context, docIdsToScoreMap.keySet(), knnQuery.getField());
+            log.debug("Segment [{}] retrieved doc vectors: [{}]", segmentName, topDocVectors.size());
+            if (!topDocVectors.isEmpty()) {
+                VectorProfiler.recordReadTimeVectors(segBaseName, segSuffix, directoryPath, topDocVectors);
+
+                return new PerLeafResult(filterWeight == null ? null : filterBitSet, docIdsToScoreMap);
+            }
+        }
+        System.out.println("Found docs total: " + docIdsToScoreMap.size());
+        log.info("Found {} docs total.", docIdsToScoreMap.size());
         return new PerLeafResult(filterWeight == null ? null : filterBitSet, docIdsToScoreMap);
+
+        //final String segmentName = context.reader().toString();
+//        final Map<Integer, Float> docIdToScoreMap = doANNSearch(context, k, null, null, null);
+//
+//        List<float[]> searchedVectors = new ArrayList<>();
+//        for(Integer docId : docIdToScoreMap.keySet()) {
+//            searchedVectors.add(getVectorForDoc(context, docId));
+//        }
+//
+//        VectorProfiler.logSearchActivity(segmentName, searchedVectors);
+//
+//        return (PerLeafResult) docIdToScoreMap;
+
+//        List<LeafReaderContext> segmentContexts = new ArrayList<>();
+//        segmentContexts.add(context);
+//        VectorProfiler.computeMeanAndLogSearch(segmentContexts);
+
+        //return new PerLeafResult(searchedVectors, docIdToScoreMap);
     }
 
     private void stopStopWatchAndLog(@Nullable final StopWatch stopWatch, final String prefixMessage, String segmentName) {
@@ -567,4 +636,15 @@ public class KNNWeight extends Weight {
         }
         return null;
     }
+
+    private Map<Integer, Float> myKnnSearchLogic(LeafReaderContext context, int k) throws IOException {
+        Map<Integer, Float> results = new HashMap<>();
+        return results;
+    }
+
+    private List<float[]> fetchDocVectors(LeafReaderContext context, Set<Integer> docIds, String fieldName) {
+        List<float[]> vectors = new ArrayList<>(docIds.size());
+        return vectors;
+    }
+
 }
