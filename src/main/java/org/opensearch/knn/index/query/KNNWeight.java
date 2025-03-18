@@ -33,7 +33,6 @@ import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.index.KNNSettings;
 import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.VectorDataType;
-import org.opensearch.knn.index.codec.KNN990Codec.KNNVectorMeanComputation;
 import org.opensearch.knn.index.codec.KNN990Codec.StatisticalOperators;
 import org.opensearch.knn.index.codec.KNN990Codec.VectorProfiler;
 import org.opensearch.knn.index.codec.util.KNNCodecUtil;
