@@ -116,9 +116,40 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                     }
 
                     try {
-                        float[] meanVector = VectorProfiler.calculateMeanVector(vectorCollection);
-                        log.info("Vector statistics for field {}: ", fieldInfo.getName(), meanVector);
-                        VectorProfiler.saveMeanVectorStats(segmentWriteState, meanVector);
+//                        float[] meanVector = VectorProfiler.calculateMeanVector(vectorCollection);
+//                        log.info("Vector statistics for field {}: ", fieldInfo.getName(), meanVector);
+//                        VectorProfiler.saveMeanVectorStats(segmentWriteState, meanVector);
+//                        KNNVectorMeanComputation meanComp = new KNNVectorMeanComputation();
+//                        float[] meanVector = VectorProfiler.calculateVector(vectorCollection, meanComp);
+//                        log.info("Vector statistics for field {}: ", fieldInfo.getName(), meanVector);
+//
+//                        // You might want to also calculate variance and standard deviation
+//                        KNNVectorVarianceComputation varComp = new KNNVectorVarianceComputation(meanVector);
+//                        float[] varianceVector = VectorProfiler.calculateVector(vectorCollection, varComp);
+//                        // Save the statistics
+//
+//                        VectorProfiler.saveMeanVectorStats(segmentWriteState, meanVector);
+
+                        //VectorProfiler.writeVectorStats(statsFile, meanVector, "Write-Time Stats");
+
+                        float[] meanVector = VectorProfiler.calculateVector(vectorCollection, StatisticalOperators.MEAN);
+                        log.info("Mean vector statistics for field {}: ", fieldInfo.getName(), meanVector);
+
+                        // Calculate variance vector
+                        float[] varianceVector = VectorProfiler.calculateVector(vectorCollection, StatisticalOperators.VARIANCE);
+                        log.info("Variance vector statistics for field {}: ", fieldInfo.getName(), varianceVector);
+
+                        // Calculate standard deviation vector (optional)
+                        float[] stdDevVector = VectorProfiler.calculateVector(vectorCollection, StatisticalOperators.STANDARD_DEVIATION);
+                        log.info("Standard deviation vector statistics for field {}: ", fieldInfo.getName(), stdDevVector);
+
+                        // Save the statistics
+//                        VectorProfiler.saveMeanVectorStats(segmentWriteState, meanVector);
+//                        VectorProfiler.saveMeanVectorStats(segmentWriteState, varianceVector);
+//                        VectorProfiler.saveMeanVectorStats(segmentWriteState, stdDevVector);
+
+                        VectorProfiler.saveVectorStats(segmentWriteState, vectorCollection);
+
                     } catch (IllegalArgumentException e) {
                         log.warn("Failed to calculate vector statistics for field {}: {}",
                                 fieldInfo.getName(), e.getMessage());

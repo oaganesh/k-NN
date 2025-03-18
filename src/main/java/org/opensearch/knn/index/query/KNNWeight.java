@@ -33,7 +33,8 @@ import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.index.KNNSettings;
 import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.VectorDataType;
-import org.opensearch.knn.index.codec.KNN990Codec.SegmentSearchProfiler;
+import org.opensearch.knn.index.codec.KNN990Codec.KNNVectorMeanComputation;
+import org.opensearch.knn.index.codec.KNN990Codec.StatisticalOperators;
 import org.opensearch.knn.index.codec.KNN990Codec.VectorProfiler;
 import org.opensearch.knn.index.codec.util.KNNCodecUtil;
 import org.opensearch.knn.index.codec.util.NativeMemoryCacheKeyHelper;
@@ -223,7 +224,21 @@ public class KNNWeight extends Weight {
         float[] queryVec = knnQuery.getQueryVector();
         if (directoryPath != null && queryVec != null && queryVec.length > 0) {
             System.out.println("Recording query vector for segment: " + segmentName);
-            VectorProfiler.recordReadTimeVectors(segBaseName, segSuffix, directoryPath, Collections.singletonList(queryVec));
+            //VectorProfiler.recordReadTimeVectors(segBaseName, segSuffix, directoryPath, Collections.singletonList(queryVec));
+            List<float[]> queryVectors = new ArrayList<>();
+            queryVectors.add(queryVec.clone());
+            try {
+                VectorProfiler.recordReadTimeVectors(
+                        segBaseName,
+                        segSuffix,
+                        directoryPath,
+                        queryVectors,
+                        StatisticalOperators.MEAN
+                );
+            } catch (Exception e) {
+                System.err.println("Error recording query vector: " + e.getMessage());
+                e.printStackTrace();
+            }
         }
 
         //Map<Integer, Float> docIdToScoreMap = myKnnSearchLogic(context, k);
@@ -233,8 +248,13 @@ public class KNNWeight extends Weight {
             List<float[]> topDocVectors = fetchDocVectors(context, docIdsToScoreMap.keySet(), knnQuery.getField());
             log.debug("Segment [{}] retrieved doc vectors: [{}]", segmentName, topDocVectors.size());
             if (!topDocVectors.isEmpty()) {
-                VectorProfiler.recordReadTimeVectors(segBaseName, segSuffix, directoryPath, topDocVectors);
-
+                VectorProfiler.recordReadTimeVectors(
+                        segBaseName,
+                        segSuffix,
+                        directoryPath,
+                        topDocVectors,
+                        StatisticalOperators.MEAN
+                );
                 return new PerLeafResult(filterWeight == null ? null : filterBitSet, docIdsToScoreMap);
             }
         }
