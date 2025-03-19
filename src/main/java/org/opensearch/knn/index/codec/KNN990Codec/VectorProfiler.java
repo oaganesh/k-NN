@@ -23,6 +23,11 @@ import org.apache.lucene.store.FSDirectory;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
+/**
+ * Utility class for performing vector calculations and profiling operations
+ * on collections of float arrays representing vectors.
+ * @param <T>
+ */
 public class VectorProfiler<T extends Computation> {
     private static final ConcurrentHashMap<VectorProfiler<?>, VectorProfiler<?>> SEGMENT_CONTEXTS = new ConcurrentHashMap<>();
 
@@ -35,6 +40,14 @@ public class VectorProfiler<T extends Computation> {
 
     private final List<float[]> allVectors = new ArrayList<>();
 
+    /**
+     * Constructor for VectorProfiler
+     * @param segBaseName
+     * @param segSuffix
+     * @param directoryPath
+     * @param dimension
+     * @param computation
+     */
     public VectorProfiler(String segBaseName, String segSuffix, Path directoryPath, int dimension, T computation) {
         this.segBaseName = segBaseName;
         this.segSuffix = segSuffix;
@@ -44,6 +57,15 @@ public class VectorProfiler<T extends Computation> {
         this.count = 0;
     }
 
+    /**
+     * Calculates a result vector based on a collection of input vectors using the specified computation.
+     *
+     * @param <T> Generic type extending Computation interface
+     * @param vectors Collection of float arrays representing input vectors
+     * @param computation The computation to be performed on the vectors
+     * @return float array representing the calculated result vector
+     * @throws IllegalArgumentException if vectors is null, empty, or contains vectors of different dimensions
+     */
     public static <T extends Computation> void recordReadTimeVectors(String segBaseName,
                                                                      String segSuffix,
                                                                      Path directoryPath,
@@ -80,6 +102,13 @@ public class VectorProfiler<T extends Computation> {
         }
     }
 
+    /**
+     * Calculates a result vector based on a collection of input vectors using the specified computation.
+     * @param vectors
+     * @param computation
+     * @return
+     * @param <T>
+     */
     public static <T extends Computation> float[] calculateVector(Collection<float[]> vectors, T computation) {
         System.out.println("Entering calculateVector");
         System.out.println("Vectors null? " + (vectors == null));
@@ -118,6 +147,12 @@ public class VectorProfiler<T extends Computation> {
         }
     }
 
+    /**
+     * Saves vector statistics (mean, variance, standard deviation) to a file.
+     * @param segmentWriteState
+     * @param vectors
+     * @throws IOException
+     */
     public static void saveVectorStats(SegmentWriteState segmentWriteState, Collection<float[]> vectors) throws IOException {
         // Calculate all statistics
         float[] meanVector = calculateVector(vectors, StatisticalOperators.MEAN);
@@ -145,42 +180,30 @@ public class VectorProfiler<T extends Computation> {
         writeAllVectorStats(statsFile, meanVector, varianceVector, stdDevVector, "Write-Time Stats");
     }
 
-
-    private static void writeVectorStats(Path outputFile, float[] meanVector, String header) throws IOException {
-        writeVectorStats(outputFile, meanVector, header, -1);
-    }
-
+    /**
+     * Writes vector statistics to a file.
+     * @param outputFile
+     * @param meanVector
+     * @param varianceVector
+     * @param stdDevVector
+     * @param header
+     * @throws IOException
+     */
     private static void writeAllVectorStats(Path outputFile, float[] meanVector, float[] varianceVector,
                                             float[] stdDevVector, String header) throws IOException {
         writeAllVectorStats(outputFile, meanVector, varianceVector, stdDevVector, header, -1);
     }
 
-    private static void writeVectorStats(Path outputFile, float[] meanVector, String header, long count) throws IOException {
-        Files.createDirectories(outputFile.getParent());
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("=== ").append(header).append(" @ ").append(System.currentTimeMillis()).append(" ===\n");
-        if (count >= 0) {
-            sb.append("count: ").append(count).append("\n");
-        }
-
-        sb.append("mean vector: [");
-        for (int i = 0; i < meanVector.length; i++) {
-            sb.append(meanVector[i]);
-            if (i < meanVector.length - 1) {
-                sb.append(", ");
-            }
-        }
-        sb.append("]\n\n");
-
-        Files.write(
-                outputFile,
-                sb.toString().getBytes(StandardCharsets.UTF_8),
-                StandardOpenOption.CREATE,
-                StandardOpenOption.APPEND
-        );
-    }
-
+    /**
+     * Writes vector statistics to a file for mean, standard deviation, and variance.
+     * @param outputFile
+     * @param meanVector
+     * @param varianceVector
+     * @param stdDevVector
+     * @param header
+     * @param count
+     * @throws IOException
+     */
     private static void writeAllVectorStats(Path outputFile, float[] meanVector, float[] varianceVector,
                                             float[] stdDevVector, String header, long count) throws IOException {
         Files.createDirectories(outputFile.getParent());
@@ -214,6 +237,11 @@ public class VectorProfiler<T extends Computation> {
         );
     }
 
+    /**
+     * Helper method to append a vector to a StringBuilder.
+     * @param sb
+     * @param vector
+     */
     private static void appendVector(StringBuilder sb, float[] vector) {
         for (int i = 0; i < vector.length; i++) {
             sb.append(vector[i]);
@@ -223,13 +251,11 @@ public class VectorProfiler<T extends Computation> {
         }
     }
 
-    public static <T extends Computation> float[] getCurrentVector(String segBaseName, String segSuffix, T computation) {
-        VectorProfiler<T> key = new VectorProfiler<>(segBaseName, segSuffix, null, 0, computation);
-        @SuppressWarnings("unchecked")
-        VectorProfiler<T> context = (VectorProfiler<T>) SEGMENT_CONTEXTS.get(key);
-        return context != null ? context.getVector() : null;
-    }
-
+    /**
+     * Writes read-time statistics for a segment to a file.
+     * @param ctx
+     * @param <T>
+     */
     private static synchronized  <T extends Computation> void writeReadTimeStats(VectorProfiler<T> ctx) {
         Collection<float[]> vectors = ctx.getAllVectors();
         if (vectors == null || vectors.isEmpty()) {
@@ -250,14 +276,11 @@ public class VectorProfiler<T extends Computation> {
             float[] stdDevVector = calculateVector(vectors, StatisticalOperators.STANDARD_DEVIATION);
 
             writeAllVectorStats(outputFile, meanVector, varianceVector, stdDevVector, "Read-Time Stats", ctx.count);
-            //writeVectorStats(outputFile, vec, "Read-Time Stats", ctx.count);
         } catch (IOException ex) {
             System.err.println("Failed to write read-time profiler file for segment "
                     + ctx.segBaseName + ": " + ex.getMessage());
         }
     }
-
-    //private final List<float[]> allVectors = new ArrayList<>();
 
     synchronized void addVectors(Collection<float[]> vectors) {
         if (vectors == null || vectors.isEmpty()) {

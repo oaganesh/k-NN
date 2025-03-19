@@ -5,6 +5,9 @@
 
 package org.opensearch.knn.index.codec.KNN990Codec;
 
+/**
+ * Enum for statistical operators used in KNN vector computation.
+ */
 public enum StatisticalOperators implements Computation {
     MEAN {
         @Override
