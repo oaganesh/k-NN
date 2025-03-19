@@ -42,6 +42,7 @@ public class KNNQuery extends Query {
     private final String field;
     private final float[] queryVector;
     private final byte[] byteQueryVector;
+    private boolean samplingEnabled;
     private int k;
     private Map<String, ?> methodParameters;
     private final String indexName;
@@ -159,6 +160,19 @@ public class KNNQuery extends Query {
         this.filterQuery = filterQuery;
         return this;
     }
+    
+    public KNNQuery(String field, float[] queryVector, boolean samplingEnabled) {
+        this.field = field;
+        this.queryVector = queryVector;
+        this.samplingEnabled = samplingEnabled;
+        this.k = k;
+        this.indexName = null;
+        this.filterQuery = filterQuery;
+        this.parentsFilter = parentsFilter;
+        this.byteQueryVector = null;
+        this.vectorDataType = null;
+        this.rescoreContext = null;
+    }
 
     /**
      * Constructs Weight implementation for this query
@@ -190,6 +204,18 @@ public class KNNQuery extends Query {
             return new KNNWeight(this, boost, filterWeight);
         }
         return new KNNWeight(this, boost);
+    }
+    
+    public String getField() { 
+        return field; 
+    }
+    
+    public float[] getQueryVector() {
+        return queryVector;
+    }
+    
+    public boolean isSamplingEnabled() {
+        return samplingEnabled;
     }
 
     private Weight getFilterWeight(IndexSearcher searcher) throws IOException {

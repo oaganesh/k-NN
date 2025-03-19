@@ -20,6 +20,11 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import org.apache.lucene.store.FSDirectory;
+import org.opensearch.common.unit.TimeValue;
+import org.opensearch.knn.index.KNNSettings;
+import org.opensearch.knn.index.memory.NativeMemoryCacheManagerDto;
+import org.opensearch.knn.indices.ModelDao;
+
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
@@ -32,6 +37,9 @@ public class VectorProfiler<T extends Computation> {
     private final float[] sumPerDimension;
     private final T computation;
     private long count;
+    private static boolean samplingEnabled = false;
+    private static ModelDao.OpenSearchKNNModelDao modelDao;
+
 
     private final List<float[]> allVectors = new ArrayList<>();
 
@@ -300,4 +308,29 @@ public class VectorProfiler<T extends Computation> {
     public int hashCode() {
         return Objects.hash(segBaseName, segSuffix);
     }
+
+    // Get the knn-sampling setting from KNNSettings
+    public static void initialize(ModelDao.OpenSearchKNNModelDao modelDaoInstance) {
+        modelDao = modelDaoInstance;
+        samplingEnabled = KNNSettings.state().getSettingValue(KNNSettings.KNN_SAMPLING);
+    }
+
+    public static boolean isSamplingEnabled() {
+        return samplingEnabled;
+    }
+
+
+//    private void initialize() {
+//        initialize(
+//                VectorProfiler.builder()
+//                        .isWeightLimited(KNNSettings.state().getSettingValue(KNNSettings.IS_KNN_SAMPLE_SETTING))
+//                        // Initially use cluster-level limit; will be updated later during cache refresh if node-specific limit exists
+//                        .maxWeight(KNNSettings.getClusterCbLimit().getKb())
+//                        .isExpirationLimited(KNNSettings.state().getSettingValue(KNNSettings.KNN_CACHE_ITEM_EXPIRY_ENABLED))
+//                        .expiryTimeInMin(
+//                                ((TimeValue) KNNSettings.state().getSettingValue(KNNSettings.KNN_CACHE_ITEM_EXPIRY_TIME_MINUTES)).getMinutes()
+//                        )
+//                        .build()
+//        );
+//    }
 }

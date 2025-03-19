@@ -56,6 +56,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
     private boolean finished;
     private final Integer approximateThreshold;
     private final NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory;
+    private final boolean samplingEnabled;
 
     public NativeEngines990KnnVectorsWriter(
         SegmentWriteState segmentWriteState,
@@ -67,7 +68,23 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         this.flatVectorsWriter = flatVectorsWriter;
         this.approximateThreshold = approximateThreshold;
         this.nativeIndexBuildStrategyFactory = nativeIndexBuildStrategyFactory;
+        this.samplingEnabled = false;
     }
+
+    public NativeEngines990KnnVectorsWriter(
+            SegmentWriteState segmentWriteState,
+            FlatVectorsWriter flatVectorsWriter,
+            Integer approximateThreshold,
+            NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory,
+            boolean samplingEnabled
+    ) {
+        this.segmentWriteState = segmentWriteState;
+        this.flatVectorsWriter = flatVectorsWriter;
+        this.approximateThreshold = approximateThreshold;
+        this.nativeIndexBuildStrategyFactory = nativeIndexBuildStrategyFactory;
+        this.samplingEnabled = samplingEnabled;
+    }
+
 
     /**
      * Add new field for indexing.
@@ -103,6 +120,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                 continue;
             }
 
+            if(!samplingEnabled) {
             Map<?, ?> vectors = field.getVectors();
             if (!vectors.isEmpty()) {
                 Object firstValue = vectors.values().iterator().next();
@@ -132,6 +150,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                         log.warn("Failed to calculate vector statistics for field {}: {}",
                                 fieldInfo.getName(), e.getMessage());
                     }
+                }
                 }
             }
 

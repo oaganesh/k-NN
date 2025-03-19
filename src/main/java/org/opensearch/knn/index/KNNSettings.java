@@ -24,6 +24,7 @@ import org.opensearch.core.common.settings.SecureString;
 import org.opensearch.core.common.unit.ByteSizeUnit;
 import org.opensearch.core.common.unit.ByteSizeValue;
 import org.opensearch.index.IndexModule;
+import org.opensearch.index.IndexSettings;
 import org.opensearch.knn.index.memory.NativeMemoryCacheManager;
 import org.opensearch.knn.index.memory.NativeMemoryCacheManagerDto;
 import org.opensearch.knn.index.util.IndexHyperParametersUtil;
@@ -33,12 +34,7 @@ import org.opensearch.monitor.os.OsProbe;
 import org.opensearch.transport.client.Client;
 
 import java.security.InvalidParameterException;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -84,6 +80,7 @@ public class KNNSettings {
     public static final String KNN_CACHE_ITEM_EXPIRY_TIME_MINUTES = "knn.cache.item.expiry.minutes";
     public static final String KNN_CIRCUIT_BREAKER_UNSET_PERCENTAGE = "knn.circuit_breaker.unset.percentage";
     public static final String KNN_INDEX = "index.knn";
+    public static final String KNN_SAMPLING = "index.knn-sampling";
     public static final String MODEL_INDEX_NUMBER_OF_SHARDS = "knn.model.index.number_of_shards";
     public static final String MODEL_INDEX_NUMBER_OF_REPLICAS = "knn.model.index.number_of_replicas";
     public static final String MODEL_CACHE_SIZE_LIMIT = "knn.model.cache.size.limit";
@@ -629,6 +626,10 @@ public class KNNSettings {
             return KNN_REMOTE_BUILD_CLIENT_PASSWORD_SETTING;
         }
 
+        if(KNN_SAMPLING.equals(key)) {
+            return IS_KNN_SAMPLE_SETTING;
+        }
+
         throw new IllegalArgumentException("Cannot find setting by key [" + key + "]");
     }
 
@@ -640,6 +641,7 @@ public class KNNSettings {
             KNN_CIRCUIT_BREAKER_TRIGGERED_SETTING,
             KNN_CIRCUIT_BREAKER_UNSET_PERCENTAGE_SETTING,
             IS_KNN_INDEX_SETTING,
+            IS_KNN_SAMPLE_SETTING,
             MODEL_INDEX_NUMBER_OF_SHARDS_SETTING,
             MODEL_INDEX_NUMBER_OF_REPLICAS_SETTING,
             MODEL_CACHE_SIZE_LIMIT_SETTING,
@@ -961,5 +963,21 @@ public class KNNSettings {
 
     private static Double percentageAsFraction(Integer percentage) {
         return percentage / 100.0;
+    }
+
+    public static final Setting<Boolean> IS_KNN_SAMPLE_SETTING = Setting.boolSetting(KNN_SAMPLING, false, IndexScope);
+
+    public static boolean isSamplingEnabled(IndexSettings indexSettings) {
+        return indexSettings.getValue(IS_KNN_SAMPLE_SETTING);
+    }
+
+    public static final List<Setting<?>> KNOWN_SETTINGS = new ArrayList<>();
+
+    static {
+        KNOWN_SETTINGS.add(IS_KNN_SAMPLE_SETTING);
+    }
+
+    public static String isSamplingEnabled(String indexName) {
+        return new String(String.valueOf(IS_KNN_SAMPLE_SETTING));
     }
 }

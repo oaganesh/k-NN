@@ -17,12 +17,14 @@ import org.opensearch.core.common.Strings;
 import org.opensearch.core.common.io.stream.StreamInput;
 import org.opensearch.core.common.io.stream.StreamOutput;
 import org.opensearch.core.xcontent.XContentBuilder;
+import org.opensearch.index.IndexSettings;
 import org.opensearch.index.mapper.MappedFieldType;
 import org.opensearch.index.query.AbstractQueryBuilder;
 import org.opensearch.index.query.QueryBuilder;
 import org.opensearch.index.query.QueryRewriteContext;
 import org.opensearch.index.query.QueryShardContext;
 import org.opensearch.index.query.WithFieldName;
+import org.opensearch.knn.index.KNNSettings;
 import org.opensearch.knn.index.engine.KNNMethodConfigContext;
 import org.opensearch.knn.index.engine.KNNMethodContext;
 import org.opensearch.knn.index.engine.model.QueryContext;
@@ -42,6 +44,7 @@ import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.indices.ModelDao;
 import org.opensearch.knn.indices.ModelMetadata;
 import org.opensearch.knn.indices.ModelUtil;
+import org.opensearch.knn.index.query.KNNQuery;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -405,6 +408,11 @@ public class KNNQueryBuilder extends AbstractQueryBuilder<KNNQueryBuilder> imple
 
         VectorQueryType vectorQueryType = getVectorQueryType(k, maxDistance, minScore);
         updateQueryStats(vectorQueryType);
+
+        IndexSettings indexSettings = context.getIndexSettings();
+        boolean samplingEnabled = KNNSettings.isSamplingEnabled(indexSettings);
+
+       //return new KNNQuery(field, queryVector, samplingEnabled);
 
         // This could be null in the case of when a model did not have serialized methodComponent information
         final String method = methodComponentContext != null ? methodComponentContext.getName() : null;
