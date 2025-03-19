@@ -86,7 +86,7 @@ public class KNNWeight extends Weight {
     private static ExactSearcher DEFAULT_EXACT_SEARCHER;
     private final QuantizationService quantizationService;
     private final boolean samplingEnabled;
-    private static final String KNN_SAMPLING = "index.knn-sampling";
+    private static final String KNN_SAMPLING = "index.knn.sampling";
 
 
     public KNNWeight(KNNQuery query, float boost) {
