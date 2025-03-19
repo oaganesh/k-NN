@@ -129,8 +129,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                         VectorProfiler.saveVectorStats(segmentWriteState, vectorCollection);
 
                     } catch (IllegalArgumentException e) {
-                        log.warn("Failed to calculate vector statistics for field {}: {}",
-                                fieldInfo.getName(), e.getMessage());
+                        log.warn("Failed to calculate vector statistics for field {}: {}", fieldInfo.getName(), e.getMessage());
                     }
                 }
             }

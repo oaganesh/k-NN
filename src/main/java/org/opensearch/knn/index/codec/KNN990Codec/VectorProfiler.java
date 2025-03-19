@@ -66,11 +66,13 @@ public class VectorProfiler<T extends Computation> {
      * @return float array representing the calculated result vector
      * @throws IllegalArgumentException if vectors is null, empty, or contains vectors of different dimensions
      */
-    public static <T extends Computation> void recordReadTimeVectors(String segBaseName,
-                                                                     String segSuffix,
-                                                                     Path directoryPath,
-                                                                     Collection<float[]> vectors,
-                                                                     T computation) {
+    public static <T extends Computation> void recordReadTimeVectors(
+        String segBaseName,
+        String segSuffix,
+        Path directoryPath,
+        Collection<float[]> vectors,
+        T computation
+    ) {
         System.out.println("Entering recordReadTimeVectors");
         System.out.println("Vectors null? " + (vectors == null));
         System.out.println("Vectors empty? " + (vectors == null ? "N/A" : vectors.isEmpty()));
@@ -87,8 +89,10 @@ public class VectorProfiler<T extends Computation> {
             VectorProfiler<T> key = new VectorProfiler<>(segBaseName, segSuffix, directoryPath, dim, computation);
 
             @SuppressWarnings("unchecked")
-            VectorProfiler<T> context = (VectorProfiler<T>) SEGMENT_CONTEXTS.computeIfAbsent(key,
-                    k -> new VectorProfiler<>(segBaseName, segSuffix, directoryPath, dim, computation));
+            VectorProfiler<T> context = (VectorProfiler<T>) SEGMENT_CONTEXTS.computeIfAbsent(
+                key,
+                k -> new VectorProfiler<>(segBaseName, segSuffix, directoryPath, dim, computation)
+            );
 
             System.out.println("Adding vectors to context");
             context.addVectors(vectors);
@@ -159,18 +163,14 @@ public class VectorProfiler<T extends Computation> {
         float[] varianceVector = calculateVector(vectors, StatisticalOperators.VARIANCE);
         float[] stdDevVector = calculateVector(vectors, StatisticalOperators.STANDARD_DEVIATION);
 
-        String statsFileName = IndexFileNames.segmentFileName(
-                segmentWriteState.segmentInfo.name,
-                segmentWriteState.segmentSuffix,
-                "txt"
-        );
+        String statsFileName = IndexFileNames.segmentFileName(segmentWriteState.segmentInfo.name, segmentWriteState.segmentSuffix, "txt");
 
         Directory directory = segmentWriteState.directory;
-        while(directory instanceof FilterDirectory) {
+        while (directory instanceof FilterDirectory) {
             directory = ((FilterDirectory) directory).getDelegate();
         }
 
-        if(!(directory instanceof FSDirectory)) {
+        if (!(directory instanceof FSDirectory)) {
             throw new IOException("Expected FSDirectory but found " + directory.getClass().getSimpleName());
         }
 
@@ -189,8 +189,13 @@ public class VectorProfiler<T extends Computation> {
      * @param header
      * @throws IOException
      */
-    private static void writeAllVectorStats(Path outputFile, float[] meanVector, float[] varianceVector,
-                                            float[] stdDevVector, String header) throws IOException {
+    private static void writeAllVectorStats(
+        Path outputFile,
+        float[] meanVector,
+        float[] varianceVector,
+        float[] stdDevVector,
+        String header
+    ) throws IOException {
         writeAllVectorStats(outputFile, meanVector, varianceVector, stdDevVector, header, -1);
     }
 
@@ -204,8 +209,14 @@ public class VectorProfiler<T extends Computation> {
      * @param count
      * @throws IOException
      */
-    private static void writeAllVectorStats(Path outputFile, float[] meanVector, float[] varianceVector,
-                                            float[] stdDevVector, String header, long count) throws IOException {
+    private static void writeAllVectorStats(
+        Path outputFile,
+        float[] meanVector,
+        float[] varianceVector,
+        float[] stdDevVector,
+        String header,
+        long count
+    ) throws IOException {
         Files.createDirectories(outputFile.getParent());
 
         StringBuilder sb = new StringBuilder();
@@ -229,12 +240,7 @@ public class VectorProfiler<T extends Computation> {
         appendVector(sb, stdDevVector);
         sb.append("]\n\n");
 
-        Files.write(
-                outputFile,
-                sb.toString().getBytes(StandardCharsets.UTF_8),
-                StandardOpenOption.CREATE,
-                StandardOpenOption.APPEND
-        );
+        Files.write(outputFile, sb.toString().getBytes(StandardCharsets.UTF_8), StandardOpenOption.CREATE, StandardOpenOption.APPEND);
     }
 
     /**
@@ -256,18 +262,14 @@ public class VectorProfiler<T extends Computation> {
      * @param ctx
      * @param <T>
      */
-    private static synchronized  <T extends Computation> void writeReadTimeStats(VectorProfiler<T> ctx) {
+    private static synchronized <T extends Computation> void writeReadTimeStats(VectorProfiler<T> ctx) {
         Collection<float[]> vectors = ctx.getAllVectors();
         if (vectors == null || vectors.isEmpty()) {
             System.out.println("No vectors available for statistics calculation");
             return;
         }
 
-        String fileName = IndexFileNames.segmentFileName(
-                ctx.segBaseName,
-                ctx.segSuffix,
-                "txt"
-        );
+        String fileName = IndexFileNames.segmentFileName(ctx.segBaseName, ctx.segSuffix, "txt");
         Path outputFile = ctx.directoryPath.resolve(fileName);
 
         try {
@@ -277,8 +279,7 @@ public class VectorProfiler<T extends Computation> {
 
             writeAllVectorStats(outputFile, meanVector, varianceVector, stdDevVector, "Read-Time Stats", ctx.count);
         } catch (IOException ex) {
-            System.err.println("Failed to write read-time profiler file for segment "
-                    + ctx.segBaseName + ": " + ex.getMessage());
+            System.err.println("Failed to write read-time profiler file for segment " + ctx.segBaseName + ": " + ex.getMessage());
         }
     }
 
@@ -315,8 +316,7 @@ public class VectorProfiler<T extends Computation> {
         if (this == o) return true;
         if (!(o instanceof VectorProfiler)) return false;
         VectorProfiler<?> that = (VectorProfiler<?>) o;
-        return Objects.equals(segBaseName, that.segBaseName) &&
-                Objects.equals(segSuffix, that.segSuffix);
+        return Objects.equals(segBaseName, that.segBaseName) && Objects.equals(segSuffix, that.segSuffix);
     }
 
     @Override
