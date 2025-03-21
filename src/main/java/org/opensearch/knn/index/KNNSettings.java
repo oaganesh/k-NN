@@ -626,7 +626,7 @@ public class KNNSettings {
             return KNN_REMOTE_BUILD_CLIENT_PASSWORD_SETTING;
         }
 
-        if(KNN_SAMPLING.equals(key)) {
+        if (KNN_SAMPLING.equals(key)) {
             return IS_KNN_SAMPLE_SETTING;
         }
 
@@ -929,6 +929,23 @@ public class KNNSettings {
         this.clusterService = clusterService;
     }
 
+    public Settings getIndexSettings(String indexName) {
+        IndexMetadata indexMetadata = clusterService.state().metadata().index(indexName);
+        if (indexMetadata == null) {
+            return Settings.builder()
+                .put(KNN_SAMPLING, false)  // default to false if not found
+                .build();
+
+            // return Settings.EMPTY;
+            // throw new IllegalStateException("No index metadata found for: " + indexName);
+        }
+        return indexMetadata.getSettings();
+    }
+
+    public ClusterService getClusterService() {
+        return this.clusterService;
+    }
+
     static class SpaceTypeValidator implements Setting.Validator<String> {
 
         @Override
@@ -977,7 +994,30 @@ public class KNNSettings {
         KNOWN_SETTINGS.add(IS_KNN_SAMPLE_SETTING);
     }
 
-    public static String isSamplingEnabled(String indexName) {
-        return new String(String.valueOf(IS_KNN_SAMPLE_SETTING));
+    // public static String isSamplingEnabled(String indexName) {
+    // return new String(String.valueOf(IS_KNN_SAMPLE_SETTING));
+    // }
+
+    // public static boolean isSamplingEnabled(Settings indexSettings) {
+    // if (indexSettings == null) {
+    // return false;
+    // }
+    // return indexSettings.getAsBoolean(KNN_SAMPLING, false);
+    // }
+
+    public static boolean isSamplingEnabled(String indexName) {
+        try {
+            ClusterService clusterService = state().getClusterService();
+            if (clusterService == null) {
+                logger.warn("ClusterService is null when checking sampling for index: {}", indexName);
+                return false;
+            }
+
+            Settings indexSettings = clusterService.state().metadata().index(indexName).getSettings();
+            return IS_KNN_SAMPLE_SETTING.get(indexSettings);
+        } catch (Exception e) {
+            logger.warn("Error checking sampling setting for index {}: {}. Using default value.", indexName, e.getMessage());
+            return false;
+        }
     }
 }

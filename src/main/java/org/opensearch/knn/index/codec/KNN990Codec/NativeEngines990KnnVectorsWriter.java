@@ -20,6 +20,8 @@ import org.apache.lucene.index.MergeState;
 import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.index.Sorter;
 import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.RamUsageEstimator;
 import org.opensearch.common.StopWatch;
@@ -32,6 +34,7 @@ import org.opensearch.knn.plugin.stats.KNNGraphValue;
 import org.opensearch.knn.quantization.models.quantizationParams.QuantizationParams;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -43,7 +46,7 @@ import static org.opensearch.knn.index.vectorvalues.KNNVectorValuesFactory.getKN
 import static org.opensearch.knn.index.vectorvalues.KNNVectorValuesFactory.getVectorValuesSupplier;
 
 /**
- * A KNNVectorsWriter class for writing the vector data strcutures and flat vectors for Native Engines.
+ * A KNNVectorsWriter class for writing the vector data structures and flat vectors for Native Engines.
  */
 @Log4j2
 public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
@@ -56,35 +59,66 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
     private boolean finished;
     private final Integer approximateThreshold;
     private final NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory;
-    private final boolean samplingEnabled;
+    // private final boolean samplingEnabled;
+    // private final String indexName;
+    // private final Settings indexSettings;
 
     public NativeEngines990KnnVectorsWriter(
         SegmentWriteState segmentWriteState,
         FlatVectorsWriter flatVectorsWriter,
         Integer approximateThreshold,
         NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory
+        // String indexName
+        // Settings indexSettings
     ) {
         this.segmentWriteState = segmentWriteState;
         this.flatVectorsWriter = flatVectorsWriter;
         this.approximateThreshold = approximateThreshold;
         this.nativeIndexBuildStrategyFactory = nativeIndexBuildStrategyFactory;
-        this.samplingEnabled = false;
+        // this.indexName = indexName;
+        // this.indexName = segmentWriteState.segmentInfo.name.getIndexName();
+        // this.indexName = segmentWriteState.segmentInfo.info.getIndexName();
+        // this.segmentWriteState = state;
+        // this.indexName = segmentWriteState.segmentInfo.name;
+        // this.indexSettings = KNNSettings.state().getIndexSettings(indexName);
+        // this.indexName = null;
+        // this.indexName = indexName;
+        // this.indexSettings = indexSettings;
+        // this.indexSettings = (indexSettings != null) ? indexSettings : Settings.EMPTY;
+        // this.samplingEnabled = false;
+        // this.samplingEnabled = KNNSettings.state().getSettingValue(KNNSettings.KNOWN_SETTINGS.toString());
     }
 
-    public NativeEngines990KnnVectorsWriter(
-            SegmentWriteState segmentWriteState,
-            FlatVectorsWriter flatVectorsWriter,
-            Integer approximateThreshold,
-            NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory,
-            boolean samplingEnabled
-    ) {
-        this.segmentWriteState = segmentWriteState;
-        this.flatVectorsWriter = flatVectorsWriter;
-        this.approximateThreshold = approximateThreshold;
-        this.nativeIndexBuildStrategyFactory = nativeIndexBuildStrategyFactory;
-        this.samplingEnabled = samplingEnabled;
-    }
+    // public NativeEngines990KnnVectorsWriter(
+    // SegmentWriteState segmentWriteState,
+    // FlatVectorsWriter flatVectorsWriter,
+    // Integer approximateThreshold,
+    // NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory,
+    // String indexName
+    // ) {
+    // this.segmentWriteState = segmentWriteState;
+    // this.flatVectorsWriter = flatVectorsWriter;
+    // this.approximateThreshold = approximateThreshold;
+    // this.nativeIndexBuildStrategyFactory = nativeIndexBuildStrategyFactory;
+    // //this.indexName = indexName;
+    // //this.samplingEnabled = false;
+    // //this.samplingEnabled = KNNSettings.state().getSettingValue(KNNSettings.KNOWN_SETTINGS.toString());
+    // }
 
+    // public NativeEngines990KnnVectorsWriter(
+    // SegmentWriteState segmentWriteState,
+    // FlatVectorsWriter flatVectorsWriter,
+    // Integer approximateThreshold,
+    // NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory,
+    // boolean samplingEnabled
+    // ) {
+    // this.segmentWriteState = segmentWriteState;
+    // this.flatVectorsWriter = flatVectorsWriter;
+    // this.approximateThreshold = approximateThreshold;
+    // this.nativeIndexBuildStrategyFactory = nativeIndexBuildStrategyFactory;
+    // //this.samplingEnabled = samplingEnabled;
+    // //this.samplingEnabled = KNNSettings.state().getSettingValue(String.valueOf(KNNSettings.IS_KNN_SAMPLE_SETTING));
+    // }
 
     /**
      * Add new field for indexing.
@@ -110,6 +144,14 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
     @Override
     public void flush(int maxDoc, final Sorter.DocMap sortMap) throws IOException {
         flatVectorsWriter.flush(maxDoc, sortMap);
+        String indexName = segmentWriteState.segmentInfo.name.split("_")[0];
+        // String indexName = segmentWriteState.segmentInfo.name;
+        // VectorProfiler.setCurrentIndexName(indexName);
+
+        // boolean samplingEnabled = KNNSettings.IS_KNN_SAMPLE_SETTING.get(indexSettings);
+        // String segmentFullName = segmentWriteState.segmentInfo.name;
+        // String indexName = parseIndexName(segmentFullName);
+        // boolean samplingEnabled = KNNSettings.IS_KNN_SAMPLE_SETTING.get(indexSettings);
 
         for (final NativeEngineFieldVectorsWriter<?> field : fields) {
             final FieldInfo fieldInfo = field.getFieldInfo();
@@ -120,7 +162,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                 continue;
             }
 
-            if(!samplingEnabled) {
+            // if (samplingEnabled) {
             Map<?, ?> vectors = field.getVectors();
             if (!vectors.isEmpty()) {
                 Object firstValue = vectors.values().iterator().next();
@@ -134,24 +176,30 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                     }
 
                     try {
-                        float[] meanVector = VectorProfiler.calculateVector(vectorCollection, StatisticalOperators.MEAN);
-                        log.info("Mean vector statistics for field {}: ", fieldInfo.getName(), meanVector);
+                        // float[] meanVector = VectorProfiler.calculateVector(vectorCollection, StatisticalOperators.MEAN);
+                        // log.info("Mean vector statistics for field {}: ", fieldInfo.getName(), meanVector);
+                        //
+                        // // Calculate variance vector
+                        // float[] varianceVector = VectorProfiler.calculateVector(vectorCollection, StatisticalOperators.VARIANCE);
+                        // log.info("Variance vector statistics for field {}: ", fieldInfo.getName(), varianceVector);
+                        //
+                        // // Calculate standard deviation vector (optional)
+                        // float[] stdDevVector = VectorProfiler.calculateVector(
+                        // vectorCollection,
+                        // StatisticalOperators.STANDARD_DEVIATION
+                        // );
+                        // log.info("Standard deviation vector statistics for field {}: ", fieldInfo.getName(), stdDevVector);
+                        VectorProfiler.saveVectorStats(segmentWriteState, vectorCollection, indexName);
 
-                        // Calculate variance vector
-                        float[] varianceVector = VectorProfiler.calculateVector(vectorCollection, StatisticalOperators.VARIANCE);
-                        log.info("Variance vector statistics for field {}: ", fieldInfo.getName(), varianceVector);
-
-                        // Calculate standard deviation vector (optional)
-                        float[] stdDevVector = VectorProfiler.calculateVector(vectorCollection, StatisticalOperators.STANDARD_DEVIATION);
-                        log.info("Standard deviation vector statistics for field {}: ", fieldInfo.getName(), stdDevVector);
-                        VectorProfiler.saveVectorStats(segmentWriteState, vectorCollection);
+                        // VectorProfiler.saveVectorStats(segmentWriteState, vectorCollection);
 
                     } catch (IllegalArgumentException e) {
-                        log.warn("Failed to calculate vector statistics for field {}: {}",
-                                fieldInfo.getName(), e.getMessage());
+                        log.warn("Failed to calculate vector statistics for field {}: {}", fieldInfo.getName(), e.getMessage());
                     }
+                    // VectorProfiler.saveVectorStats(segmentWriteState, vectorCollection);
+
                 }
-                }
+                // }
             }
 
             final Supplier<KNNVectorValues<?>> knnVectorValuesSupplier = getVectorValuesSupplier(
@@ -183,7 +231,19 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
             KNNGraphValue.REFRESH_TOTAL_TIME_IN_MILLIS.incrementBy(time_in_millis);
             log.debug("Flush took {} ms for vector field [{}]", time_in_millis, fieldInfo.getName());
         }
+
     }
+
+    // private String parseIndexName(String segName) {
+    // if(segName == null) {
+    // return null;
+    // }
+    // int index_pos = segName.indexOf("_0");
+    // if(index_pos > 0) {
+    // return segName.substring(0, index_pos);
+    // }
+    // return segName;
+    // }
 
     @Override
     public void mergeOneField(final FieldInfo fieldInfo, final MergeState mergeState) throws IOException {
@@ -321,5 +381,17 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
             return true;
         }
         return docCount < approximateThreshold;
+    }
+
+    private String getIndexName(Directory directory) {
+        if (directory instanceof FSDirectory) {
+            Path indexPath = ((FSDirectory) directory).getDirectory();
+            // The index name is typically the name of the parent directory
+            return indexPath.getParent().getFileName().toString();
+        } else {
+            // For non-FSDirectory, we might need to use a different approach
+            // This is a fallback that might not always be correct
+            return segmentWriteState.segmentInfo.name.split("_")[0];
+        }
     }
 }

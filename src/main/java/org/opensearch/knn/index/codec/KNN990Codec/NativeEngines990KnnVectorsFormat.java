@@ -35,6 +35,7 @@ public class NativeEngines990KnnVectorsFormat extends KnnVectorsFormat {
     private static final String FORMAT_NAME = "NativeEngines990KnnVectorsFormat";
     private static int approximateThreshold;
     private final NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory;
+    // private final Settings indexSettings;
 
     public NativeEngines990KnnVectorsFormat() {
         this(new Lucene99FlatVectorsFormat(new DefaultFlatVectorScorer()));
@@ -61,7 +62,21 @@ public class NativeEngines990KnnVectorsFormat extends KnnVectorsFormat {
         NativeEngines990KnnVectorsFormat.flatVectorsFormat = flatVectorsFormat;
         NativeEngines990KnnVectorsFormat.approximateThreshold = approximateThreshold;
         this.nativeIndexBuildStrategyFactory = nativeIndexBuildStrategyFactory;
+        // this.indexSettings = Sett;
     }
+
+    // public NativeEngines990KnnVectorsFormat(
+    // final FlatVectorsFormat flatVectorsFormat,
+    // int approximateThreshold,
+    // final NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory,
+    // final Settings indexSettings
+    // ) {
+    // super(FORMAT_NAME);
+    // NativeEngines990KnnVectorsFormat.flatVectorsFormat = flatVectorsFormat;
+    // NativeEngines990KnnVectorsFormat.approximateThreshold = approximateThreshold;
+    // this.nativeIndexBuildStrategyFactory = nativeIndexBuildStrategyFactory;
+    // this.indexSettings = indexSettings;
+    // }
 
     /**
      * Returns a {@link KnnVectorsWriter} to write the vectors to the index.

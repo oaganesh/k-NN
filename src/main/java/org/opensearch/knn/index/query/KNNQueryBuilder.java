@@ -44,7 +44,6 @@ import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.indices.ModelDao;
 import org.opensearch.knn.indices.ModelMetadata;
 import org.opensearch.knn.indices.ModelUtil;
-import org.opensearch.knn.index.query.KNNQuery;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -412,7 +411,7 @@ public class KNNQueryBuilder extends AbstractQueryBuilder<KNNQueryBuilder> imple
         IndexSettings indexSettings = context.getIndexSettings();
         boolean samplingEnabled = KNNSettings.isSamplingEnabled(indexSettings);
 
-       //return new KNNQuery(field, queryVector, samplingEnabled);
+        // return new KNNQuery(field, queryVector, samplingEnabled);
 
         // This could be null in the case of when a model did not have serialized methodComponent information
         final String method = methodComponentContext != null ? methodComponentContext.getName() : null;

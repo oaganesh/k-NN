@@ -9,7 +9,7 @@ public enum StatisticalOperators implements Computation {
     MEAN {
         @Override
         public float[] apply(float a, float b) {
-            return new float[]{a + b};
+            return new float[] { a + b };
         }
 
         @Override
@@ -25,7 +25,7 @@ public enum StatisticalOperators implements Computation {
         @Override
         public float[] apply(float a, float b) {
             float diff = b - a;
-            return new float[]{a + (diff * diff)};
+            return new float[] { a + (diff * diff) };
         }
 
         @Override

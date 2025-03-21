@@ -9,7 +9,6 @@ import com.google.common.annotations.VisibleForTesting;
 import lombok.Getter;
 import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.index.FieldInfo;
-import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SegmentReader;
 import org.apache.lucene.search.DocIdSetIterator;
@@ -88,7 +87,6 @@ public class KNNWeight extends Weight {
     private final boolean samplingEnabled;
     private static final String KNN_SAMPLING = "index.knn.sampling";
 
-
     public KNNWeight(KNNQuery query, float boost) {
         super(query);
         this.knnQuery = query;
@@ -98,7 +96,9 @@ public class KNNWeight extends Weight {
         this.exactSearcher = DEFAULT_EXACT_SEARCHER;
         this.quantizationService = QuantizationService.getInstance();
         this.samplingEnabled = false;
-        //this.samplingEnabled = this.samplingEnabled = KNNSettings.getAsBoolean(query.getIndexName(), KNN_SAMPLING, false);
+        // this.samplingEnabled = KNNSettings.IS_KNN_SAMPLE_SETTING.get(query.getIndexSettings().getSettings());
+        // this.samplingEnabled = KNNSettings.state().getSettingValue(String.valueOf(KNNSettings.KNOWN_SETTINGS));
+        // this.samplingEnabled = this.samplingEnabled = KNNSettings.getAsBoolean(query.getIndexName(), KNN_SAMPLING, false);
 
     }
 
@@ -117,8 +117,8 @@ public class KNNWeight extends Weight {
         super(query);
         this.knnQuery = query;
         this.boost = boost;
-        this.samplingEnabled = samplingEnabled;
-        //this.samplingEnabled = Boolean.parseBoolean(KNNSettings.isSamplingEnabled(query.getIndexName())); // Get from settings
+        this.samplingEnabled = KNNSettings.state().getSettingValue(KNNSettings.KNN_SAMPLING);
+        // this.samplingEnabled = Boolean.parseBoolean(KNNSettings.isSamplingEnabled(query.getIndexName())); // Get from settings
         this.nativeMemoryCacheManager = NativeMemoryCacheManager.getInstance();
         this.filterWeight = null;
         this.exactSearcher = DEFAULT_EXACT_SEARCHER;
@@ -177,8 +177,8 @@ public class KNNWeight extends Weight {
         final String segmentName = reader.getSegmentName();
         final String segBaseName = reader.getSegmentInfo().info.name;
         final String segSuffix = Arrays.toString(reader.getSegmentInfo().info.getId());
-        //final IndexSettings indexSettings = getIndexSEttings(reader)
-       //boolean samplingEnabled = indexSettings.getValue(KNNSettings.KNN_SAMPLING);
+        // final IndexSettings indexSettings = getIndexSEttings(reader)
+        // boolean samplingEnabled = indexSettings.getValue(KNNSettings.KNN_SAMPLING);
 
         StopWatch stopWatch = startStopWatch();
         final BitSet filterBitSet = getFilteredDocsBitSet(context);
@@ -216,93 +216,94 @@ public class KNNWeight extends Weight {
         // See whether we have to perform exact search based on approx search results
         // This is required if there are no native engine files or if approximate search returned
         // results less than K, though we have more than k filtered docs
-        if(samplingEnabled) {
-            if (isExactSearchRequire(context, cardinality, docIdsToScoreMap.size())) {
-                final BitSetIterator docs = filterWeight != null ? new BitSetIterator(filterBitSet, cardinality) : null;
-                Map<Integer, Float> result = doExactSearch(context, docs, cardinality, k);
-                return new PerLeafResult(filterWeight == null ? null : filterBitSet, result);
-            }
-            Directory directory = reader.directory();
-            while (directory instanceof FilterDirectory) {
-                directory = ((FilterDirectory) directory).getDelegate();
-            }
-            Path directoryPath = null;
-            if (directory instanceof FSDirectory) {
-                directoryPath = ((FSDirectory) directory).getDirectory();
-                System.out.println("Segment is stored in FSDirectory at path: " + directoryPath);
-            } else {
-                return PerLeafResult.EMPTY_RESULT;
-            }
-//        if(!(directory instanceof FSDirectory)) {
-//            return PerLeafResult.EMPTY_RESULT;
-//        }
-            //Path directoryPath = ((FSDirectory) directory).getDirectory();
-            //Map<Integer, Float> docIdsToScoreMap = doANNSearch(reader, context, filterBitSet, cardinality, k);
-//        if(isExactSearchRequire(context, cardinality, docIdsToScoreMap.size())) {
-//            docIdsToScoreMap = doExactSearch(context, new BitSetIterator(filterBitSet, cardinality), cardinality, k);
-//
-//        }
+        if (isExactSearchRequire(context, cardinality, docIdsToScoreMap.size())) {
+            final BitSetIterator docs = filterWeight != null ? new BitSetIterator(filterBitSet, cardinality) : null;
+            Map<Integer, Float> result = doExactSearch(context, docs, cardinality, k);
+            return new PerLeafResult(filterWeight == null ? null : filterBitSet, result);
+        }
+        // if (samplingEnabled) {
+        Directory directory = reader.directory();
+        while (directory instanceof FilterDirectory) {
+            directory = ((FilterDirectory) directory).getDelegate();
+        }
+        Path directoryPath = null;
+        if (directory instanceof FSDirectory) {
+            directoryPath = ((FSDirectory) directory).getDirectory();
+            System.out.println("Segment is stored in FSDirectory at path: " + directoryPath);
+        } else {
+            return PerLeafResult.EMPTY_RESULT;
+        }
+        // if(!(directory instanceof FSDirectory)) {
+        // return PerLeafResult.EMPTY_RESULT;
+        // }
+        // Path directoryPath = ((FSDirectory) directory).getDirectory();
+        // Map<Integer, Float> docIdsToScoreMap = doANNSearch(reader, context, filterBitSet, cardinality, k);
+        // if(isExactSearchRequire(context, cardinality, docIdsToScoreMap.size())) {
+        // docIdsToScoreMap = doExactSearch(context, new BitSetIterator(filterBitSet, cardinality), cardinality, k);
+        //
+        // }
 
-            float[] queryVec = knnQuery.getQueryVector();
-            if (directoryPath != null && queryVec != null && queryVec.length > 0) {
-                System.out.println("Recording query vector for segment: " + segmentName);
-                //VectorProfiler.recordReadTimeVectors(segBaseName, segSuffix, directoryPath, Collections.singletonList(queryVec));
-                List<float[]> queryVectors = new ArrayList<>();
-                queryVectors.add(queryVec.clone());
-                try {
-                    VectorProfiler.recordReadTimeVectors(
-                            segBaseName,
-                            segSuffix,
-                            directoryPath,
-                            queryVectors,
-                            StatisticalOperators.MEAN
-                    );
-                } catch (Exception e) {
-                    System.err.println("Error recording query vector: " + e.getMessage());
-                    e.printStackTrace();
-                }
+        float[] queryVec = knnQuery.getQueryVector();
+        if (directoryPath != null && queryVec != null && queryVec.length > 0) {
+            System.out.println("Recording query vector for segment: " + segmentName);
+            // VectorProfiler.recordReadTimeVectors(segBaseName, segSuffix, directoryPath, Collections.singletonList(queryVec));
+            List<float[]> queryVectors = new ArrayList<>();
+            queryVectors.add(queryVec.clone());
+            try {
+                VectorProfiler.recordReadTimeVectors(
+                    segBaseName,
+                    segSuffix,
+                    directoryPath,
+                    queryVectors,
+                    StatisticalOperators.MEAN,
+                    knnQuery.getIndexName()
+                );
+            } catch (Exception e) {
+                System.err.println("Error recording query vector: " + e.getMessage());
+                e.printStackTrace();
             }
+        }
 
-
-            //Map<Integer, Float> docIdToScoreMap = myKnnSearchLogic(context, k);
-            // Map<Integer, Float> docIdToScoreMap = doANNSearchOrExactSearch(...);
-            if (directoryPath != null && !docIdsToScoreMap.isEmpty()) {
-                System.out.println("Fetching and recording top-K doc vectors for segment: " + segmentName);
-                List<float[]> topDocVectors = fetchDocVectors(context, docIdsToScoreMap.keySet(), knnQuery.getField());
-                log.debug("Segment [{}] retrieved doc vectors: [{}]", segmentName, topDocVectors.size());
-                if (!topDocVectors.isEmpty()) {
-                    VectorProfiler.recordReadTimeVectors(
-                            segBaseName,
-                            segSuffix,
-                            directoryPath,
-                            topDocVectors,
-                            StatisticalOperators.MEAN
-                    );
-                    return new PerLeafResult(filterWeight == null ? null : filterBitSet, docIdsToScoreMap);
-                }
-                System.out.println("Found docs total: " + docIdsToScoreMap.size());
-                log.info("Found {} docs total.", docIdsToScoreMap.size());
+        // Map<Integer, Float> docIdToScoreMap = myKnnSearchLogic(context, k);
+        // Map<Integer, Float> docIdToScoreMap = doANNSearchOrExactSearch(...);
+        if (directoryPath != null && !docIdsToScoreMap.isEmpty()) {
+            System.out.println("Fetching and recording top-K doc vectors for segment: " + segmentName);
+            List<float[]> topDocVectors = fetchDocVectors(context, docIdsToScoreMap.keySet(), knnQuery.getField());
+            log.debug("Segment [{}] retrieved doc vectors: [{}]", segmentName, topDocVectors.size());
+            if (!topDocVectors.isEmpty()) {
+                VectorProfiler.recordReadTimeVectors(
+                    segBaseName,
+                    segSuffix,
+                    directoryPath,
+                    topDocVectors,
+                    StatisticalOperators.MEAN,
+                    knnQuery.getIndexName()
+                );
+                return new PerLeafResult(filterWeight == null ? null : filterBitSet, docIdsToScoreMap);
             }
+            System.out.println("Found docs total: " + docIdsToScoreMap.size());
+            log.info("Found {} docs total.", docIdsToScoreMap.size());
+            // }
         }
         return new PerLeafResult(filterWeight == null ? null : filterBitSet, docIdsToScoreMap);
 
-        //final String segmentName = context.reader().toString();
-//        final Map<Integer, Float> docIdToScoreMap = doANNSearch(context, k, null, null, null);
-//
-//        List<float[]> searchedVectors = new ArrayList<>();
-//        for(Integer docId : docIdToScoreMap.keySet()) {
-//            searchedVectors.add(getVectorForDoc(context, docId));
-//        }
-//
-//        VectorProfiler.logSearchActivity(segmentName, searchedVectors);
-//
-//        return (PerLeafResult) docIdToScoreMap;
+        // final String segmentName = context.reader().toString();
+        // final Map<Integer, Float> docIdToScoreMap = doANNSearch(context, k, null, null, null);
+        //
+        // List<float[]> searchedVectors = new ArrayList<>();
+        // for(Integer docId : docIdToScoreMap.keySet()) {
+        // searchedVectors.add(getVectorForDoc(context, docId));
+        // }
+        //
+        // VectorProfiler.logSearchActivity(segmentName, searchedVectors);
+        //
+        // return (PerLeafResult) docIdToScoreMap;
 
-//        List<LeafReaderContext> segmentContexts = new ArrayList<>();
-//        segmentContexts.add(context);
-//        VectorProfiler.computeMeanAndLogSearch(segmentContexts);
+        // List<LeafReaderContext> segmentContexts = new ArrayList<>();
+        // segmentContexts.add(context);
+        // VectorProfiler.computeMeanAndLogSearch(segmentContexts);
 
-        //return new PerLeafResult(searchedVectors, docIdToScoreMap);
+        // return new PerLeafResult(searchedVectors, docIdToScoreMap);
     }
 
     private void stopStopWatchAndLog(@Nullable final StopWatch stopWatch, final String prefixMessage, String segmentName) {
@@ -691,8 +692,16 @@ public class KNNWeight extends Weight {
         return vectors;
     }
 
-//    private boolean isSamplingEnabled() {
-//        return this.samplingEnabled;
-//    }
+    // public Settings getIndexSettings(String indexName) {
+    // IndexMetadata indexMetadata = clusterService.state().metadata().index(indexName);
+    // if(indexMetadata == null) {
+    // throw new IllegalStateException("No index metadata found for: " + indexName);
+    // }
+    // return indexMetadata.getSettings();
+    // }
+
+    // private boolean isSamplingEnabled() {
+    // return this.samplingEnabled;
+    // }
 
 }

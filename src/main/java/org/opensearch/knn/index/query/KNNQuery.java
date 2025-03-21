@@ -160,7 +160,7 @@ public class KNNQuery extends Query {
         this.filterQuery = filterQuery;
         return this;
     }
-    
+
     public KNNQuery(String field, float[] queryVector, boolean samplingEnabled) {
         this.field = field;
         this.queryVector = queryVector;
@@ -205,15 +205,15 @@ public class KNNQuery extends Query {
         }
         return new KNNWeight(this, boost);
     }
-    
-    public String getField() { 
-        return field; 
+
+    public String getField() {
+        return field;
     }
-    
+
     public float[] getQueryVector() {
         return queryVector;
     }
-    
+
     public boolean isSamplingEnabled() {
         return samplingEnabled;
     }
@@ -274,6 +274,10 @@ public class KNNQuery extends Query {
             && Objects.equals(parentsFilter, other.parentsFilter)
             && Objects.equals(filterQuery, other.filterQuery)
             && Objects.equals(rescoreContext, other.rescoreContext);
+    }
+
+    public String getIndexSettings() {
+        return indexName;
     }
 
     /**
