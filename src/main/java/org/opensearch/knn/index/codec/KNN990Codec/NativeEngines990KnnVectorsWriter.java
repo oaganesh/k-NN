@@ -108,7 +108,6 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                 field.getVectors()
             );
             final QuantizationState quantizationState = train(field.getFieldInfo(), knnVectorValuesSupplier, totalLiveDocs);
-            log.debug("Starting profiling for field: {} with {} vectors", fieldInfo.getName(), totalLiveDocs);
             SegmentProfilerState.profileVectors(knnVectorValuesSupplier);
             if (quantizationState == null && shouldSkipBuildingVectorDataStructure(totalLiveDocs)) {
                 log.info(
@@ -119,11 +118,6 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                 );
                 continue;
             }
-//            SegmentProfilerState.profileVectors(getVectorValuesSupplier(
-//                    vectorDataType,
-//                    field.getFlatFieldVectorsWriter().getDocsWithFieldSet(),
-//                    field.getVectors()
-//            ));
             final NativeIndexWriter writer = NativeIndexWriter.getWriter(
                 fieldInfo,
                 segmentWriteState,
@@ -157,7 +151,6 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         }
 
         final QuantizationState quantizationState = train(fieldInfo, knnVectorValuesSupplier, totalLiveDocs);
-        //SegmentProfilerState.profileVectors(knnVectorValuesSupplier);
         // should skip graph building only for non quantization use case and if threshold is met
         if (quantizationState == null && shouldSkipBuildingVectorDataStructure(totalLiveDocs)) {
             log.info(

@@ -17,7 +17,6 @@ import java.util.List;
 import java.util.function.Supplier;
 
 import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
-import static org.opensearch.knn.index.codec.util.KNNCodecUtil.initializeVectorValues;
 
 /**
  * Class to profile segment vectors and list summary statistics for each dimension of the vectors
@@ -52,50 +51,50 @@ public class SegmentProfilerState {
         KNNCodecUtil.initializeVectorValues(vectorValues);
         List<SummaryStatistics> statistics = new ArrayList<>();
 
-        // Get first vector to determine dimension
-        int doc = vectorValues.nextDoc();
-        if (doc == NO_MORE_DOCS) {
+        if (vectorValues.docId() == NO_MORE_DOCS) {
             log.info("No vectors to profile");
             return new SegmentProfilerState(statistics);
         }
 
-        float[] firstVector = (float[]) vectorValues.getVector();
-        int dimension = firstVector.length;
-        log.info("Starting vector profiling with dimension: {}", dimension);
+        try {
+            float[] firstVector = (float[]) vectorValues.getVector();
+            int dimension = firstVector.length;
+            log.info("Starting vector profiling with dimension: {}", dimension);
 
-        // Initialize statistics based on first vector's dimension
-        for (int i = 0; i < dimension; i++) {
-            statistics.add(new SummaryStatistics());
-        }
-
-        // Process first vector
-        for (int j = 0; j < firstVector.length; j++) {
-            statistics.get(j).addValue(firstVector[j]);
-        }
-
-        // Process remaining vectors
-        int vectorCount = 1;
-        while (vectorValues.nextDoc() != NO_MORE_DOCS) {
-            vectorCount++;
-            float[] vector = (float[]) vectorValues.getVector();
-            for (int j = 0; j < vector.length; j++) {
-                statistics.get(j).addValue(vector[j]);
+            for (int i = 0; i < dimension; i++) {
+                statistics.add(new SummaryStatistics());
             }
-        }
 
-        // Log detailed statistics
-        log.info("Vector profiling completed - processed {} vectors with {} dimensions", vectorCount, dimension);
-        for (int i = 0; i < dimension; i++) {
-            SummaryStatistics stats = statistics.get(i);
-            log.info("Dimension {} stats: mean={}, std={}, min={}, max={}",
+            for (int j = 0; j < firstVector.length; j++) {
+                statistics.get(j).addValue(firstVector[j]);
+            }
+
+            int vectorCount = 1;
+            while (vectorValues.nextDoc() != NO_MORE_DOCS) {
+                vectorCount++;
+                float[] vector = (float[]) vectorValues.getVector();
+                for (int j = 0; j < vector.length; j++) {
+                    statistics.get(j).addValue(vector[j]);
+                }
+            }
+
+            log.info("Vector profiling completed - processed {} vectors with {} dimensions", vectorCount, dimension);
+            for (int i = 0; i < dimension; i++) {
+                SummaryStatistics stats = statistics.get(i);
+                log.info(
+                    "Dimension {} stats: mean={}, std={}, min={}, max={}",
                     i,
                     stats.getMean(),
                     stats.getStandardDeviation(),
                     stats.getMin(),
                     stats.getMax()
-            );
-        }
+                );
+            }
 
-        return new SegmentProfilerState(statistics);
+            return new SegmentProfilerState(statistics);
+        } catch (ClassCastException e) {
+            log.error("Error during vector profiling: {}", e.getMessage(), e);
+            return new SegmentProfilerState(statistics);
+        }
     }
 }
