@@ -33,9 +33,8 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
  */
 @Log4j2
 public class SegmentProfilerState {
-    private static final String VECTOR_STATS_CODEC_SUFFIX = "vstats";
-    private static final String VECTOR_STATS_JSON_SUFFIX = "vstats.json";
-    private static final String VECTOR_STATS_FORMAT = "VectorStatsFormat";
+    private static final String VECTOR_STATS_CODEC_NAME = "VectorStatsFormat";
+    private static final String VECTOR_STATS_CODEC_EXTENSION = "json";
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("#.####");
     private static final int CURRENT_VERSION = 1;
 
@@ -54,6 +53,20 @@ public class SegmentProfilerState {
     ) throws IOException {
         log.info("Starting vector profiling for field: {}", fieldName);
 
+        // Log directory details
+        try {
+            log.info("Directory class: {}", segmentWriteState.directory.getClass().getName());
+
+            // List all existing files in the directory
+            log.info("Existing files in directory:");
+            String[] files = segmentWriteState.directory.listAll();
+            for (String file : files) {
+                log.info(" - {}", file);
+            }
+        } catch (Exception e) {
+            log.warn("Could not list directory files: {}", e.getMessage());
+        }
+
         KNNVectorValues<?> vectorValues = knnVectorValuesSupplier.get();
         if (vectorValues == null) {
             log.warn("No vector values available for field: {}", fieldName);
@@ -62,20 +75,17 @@ public class SegmentProfilerState {
 
         SegmentProfilerState profilerState = new SegmentProfilerState(new ArrayList<>());
 
-        // Create both codec and JSON files
+        // Create a properly formatted codec file name
         String codecFileName = IndexFileNames.segmentFileName(
                 segmentWriteState.segmentInfo.name,
                 segmentWriteState.segmentSuffix,
-                "json"
+                VECTOR_STATS_CODEC_EXTENSION
         );
 
-        String jsonFileName = IndexFileNames.segmentFileName(
+        log.info("Creating stats file: {} for segment: {} with suffix: {}",
+                codecFileName,
                 segmentWriteState.segmentInfo.name,
-                segmentWriteState.segmentSuffix,
-                "json"
-        );
-
-        log.info("Creating stats files: {} and {}", codecFileName, jsonFileName);
+                segmentWriteState.segmentSuffix);
 
         try {
             // Process vectors and collect statistics
@@ -106,7 +116,7 @@ public class SegmentProfilerState {
                 vectorValues.nextDoc();
             }
 
-            log.info("Processed {} vectors with {} dimensions", vectorCount, dimension);
+            log.info("Processed {} vectors with {} dimensions for field {}", vectorCount, dimension, fieldName);
 
             // Create JSON content
             XContentBuilder jsonBuilder = XContentFactory.jsonBuilder();
@@ -135,44 +145,68 @@ public class SegmentProfilerState {
                 jsonBuilder.endArray();
             }
             jsonBuilder.endObject();
+            String jsonContent = jsonBuilder.toString();
+            log.info("Created JSON content: {}", jsonContent.substring(0, Math.min(200, jsonContent.length())) + "...");
 
-            // Write JSON file
-            try (IndexOutput jsonOutput = segmentWriteState.directory.createOutput(jsonFileName, segmentWriteState.context)) {
-                byte[] jsonBytes = jsonBuilder.toString().getBytes(StandardCharsets.UTF_8);
-                jsonOutput.writeBytes(jsonBytes, jsonBytes.length);
-                log.info("Successfully wrote JSON statistics to file: {}", jsonFileName);
+            try {
+                // Write a single codec file with proper headers and footers
+                log.info("Opening output file: {}", codecFileName);
+                profilerState.output = segmentWriteState.directory.createOutput(codecFileName, segmentWriteState.context);
+                log.info("Successfully opened output file");
+
+                log.info("Writing codec header");
+                CodecUtil.writeIndexHeader(
+                        profilerState.output,
+                        VECTOR_STATS_CODEC_NAME,
+                        CURRENT_VERSION,
+                        segmentWriteState.segmentInfo.getId(),
+                        segmentWriteState.segmentSuffix
+                );
+                log.info("Successfully wrote codec header");
+
+                // Write the JSON content to codec file
+                byte[] jsonBytes = jsonContent.getBytes(StandardCharsets.UTF_8);
+                log.info("Writing content length: {} bytes", jsonBytes.length);
+                profilerState.output.writeVInt(jsonBytes.length);
+                log.info("Writing content bytes");
+                profilerState.output.writeBytes(jsonBytes, jsonBytes.length);
+                log.info("Successfully wrote content bytes");
+
+                log.info("Writing codec footer");
+                CodecUtil.writeFooter(profilerState.output);
+                log.info("Successfully wrote codec footer");
+
+                // List all files after write operation
+                try {
+                    log.info("Files in directory after write:");
+                    String[] filesAfter = segmentWriteState.directory.listAll();
+                    for (String file : filesAfter) {
+                        log.info(" - {}", file);
+                    }
+                } catch (Exception e) {
+                    log.warn("Could not list directory files after write: {}", e.getMessage());
+                }
+            } catch (Exception e) {
+                log.error("Error while writing output file: ", e);
+                throw e;
             }
 
-            // Write codec file
-            profilerState.output = segmentWriteState.directory.createOutput(codecFileName, segmentWriteState.context);
-            CodecUtil.writeIndexHeader(
-                    profilerState.output,
-                    VECTOR_STATS_FORMAT,
-                    CURRENT_VERSION,
-                    segmentWriteState.segmentInfo.getId(),
-                    segmentWriteState.segmentSuffix
-            );
-
-            // Write the same content to codec file
-            byte[] jsonBytes = jsonBuilder.toString().getBytes(StandardCharsets.UTF_8);
-            profilerState.output.writeVInt(jsonBytes.length);
-            profilerState.output.writeBytes(jsonBytes, jsonBytes.length);
-            CodecUtil.writeFooter(profilerState.output);
-
-            log.info("Successfully wrote codec statistics to file: {}", codecFileName);
+            log.info("Successfully wrote vector stats for field {} to file: {}", fieldName, codecFileName);
 
             return profilerState;
         } catch (Exception e) {
-            log.error("Error during vector profiling: ", e);
+            log.error("Error during vector profiling for field {}: ", fieldName, e);
             throw e;
         } finally {
             if (profilerState.output != null) {
-                profilerState.output.close();
+                try {
+                    log.info("Closing output file");
+                    profilerState.output.close();
+                    log.info("Successfully closed output file");
+                } catch (Exception e) {
+                    log.error("Error closing output file: ", e);
+                }
             }
         }
     }
 }
-
-/**
- * org.apache.lucene.index.CorruptIndexException: compound sub-files must have a valid codec header and footer: codec header mismatch: actual header=2065852009 vs expected header=1071082519 (resource=BufferedChecksumIndexInput(MemorySegmentIndexInput(path="/Users/oaganesh/k-NN/build/testclusters/integTest-0/data/nodes/0/indices/YfQ5ppPRQLCd69mXt3E2qw/0/index/_0_NativeEngines990KnnVectorsFormat_0.json")))
- */
