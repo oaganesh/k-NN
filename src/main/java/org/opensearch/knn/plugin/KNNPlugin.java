@@ -81,6 +81,7 @@ import org.opensearch.knn.plugin.transport.UpdateModelGraveyardAction;
 import org.opensearch.knn.plugin.transport.UpdateModelGraveyardTransportAction;
 import org.opensearch.knn.plugin.transport.UpdateModelMetadataAction;
 import org.opensearch.knn.plugin.transport.UpdateModelMetadataTransportAction;
+import org.opensearch.knn.profiler.RestKNNSamplingStatsHandler;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationStateCache;
 import org.opensearch.knn.training.TrainingJobClusterStateListener;
 import org.opensearch.knn.training.TrainingJobRunner;
@@ -171,6 +172,8 @@ public class KNNPlugin extends Plugin
 
     private KNNStats knnStats;
     private ClusterService clusterService;
+    // private IndicesService indicesService;
+    private Environment environment;
     private Supplier<RepositoriesService> repositoriesServiceSupplier;
 
     @Override
@@ -201,7 +204,9 @@ public class KNNPlugin extends Plugin
         Supplier<RepositoriesService> repositoriesServiceSupplier
     ) {
         this.clusterService = clusterService;
+        // this.indicesService = client.getInstanceFromNode(IndicesService.class);
         this.repositoriesServiceSupplier = repositoriesServiceSupplier;
+        this.environment = environment;
 
         // Initialize Native Memory loading strategies
         VectorReader vectorReader = new VectorReader(client);
@@ -248,6 +253,20 @@ public class KNNPlugin extends Plugin
             clusterService,
             indexNameExpressionResolver
         );
+
+        // IndicesService indicesService = new IndicesService(
+        // settings,
+        // clusterService.getClusterSettings(),
+        // indexNameExpressionResolver,
+        // clusterService
+        // );
+        RestKNNSamplingStatsHandler restKNNSamplingStatsHandler = new RestKNNSamplingStatsHandler(
+            settings,
+            clusterService,
+            indexNameExpressionResolver,
+            this.environment
+            // indicesService
+        );
         RestGetModelHandler restGetModelHandler = new RestGetModelHandler();
         RestDeleteModelHandler restDeleteModelHandler = new RestDeleteModelHandler();
         RestTrainModelHandler restTrainModelHandler = new RestTrainModelHandler();
@@ -261,7 +280,8 @@ public class KNNPlugin extends Plugin
             restDeleteModelHandler,
             restTrainModelHandler,
             restSearchModelHandler,
-            restClearCacheHandler
+            restClearCacheHandler,
+            restKNNSamplingStatsHandler
         );
     }
 
