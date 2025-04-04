@@ -30,6 +30,7 @@ import org.opensearch.index.IndexSettings;
 import org.opensearch.index.codec.CodecServiceFactory;
 import org.opensearch.index.engine.EngineFactory;
 import org.opensearch.index.mapper.Mapper;
+import org.opensearch.indices.IndicesService;
 import org.opensearch.indices.SystemIndexDescriptor;
 import org.opensearch.knn.common.featureflags.KNNFeatureFlags;
 import org.opensearch.knn.index.KNNCircuitBreaker;
@@ -172,7 +173,7 @@ public class KNNPlugin extends Plugin
 
     private KNNStats knnStats;
     private ClusterService clusterService;
-    // private IndicesService indicesService;
+    private IndicesService indicesService;
     private Environment environment;
     private Supplier<RepositoriesService> repositoriesServiceSupplier;
 
@@ -264,8 +265,8 @@ public class KNNPlugin extends Plugin
             settings,
             clusterService,
             indexNameExpressionResolver,
-            this.environment
-            // indicesService
+            this.environment,
+            indicesService
         );
         RestGetModelHandler restGetModelHandler = new RestGetModelHandler();
         RestDeleteModelHandler restDeleteModelHandler = new RestDeleteModelHandler();
