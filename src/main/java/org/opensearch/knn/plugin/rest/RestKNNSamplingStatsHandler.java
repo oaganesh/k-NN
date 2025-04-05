@@ -20,6 +20,7 @@ import org.opensearch.knn.plugin.KNNPlugin;
 import org.opensearch.knn.profiler.SegmentProfilerState;
 import org.opensearch.rest.BaseRestHandler;
 import org.opensearch.rest.BytesRestResponse;
+import org.opensearch.rest.RestChannel;
 import org.opensearch.rest.RestRequest;
 import org.opensearch.transport.client.node.NodeClient;
 
@@ -83,7 +84,6 @@ public class RestKNNSamplingStatsHandler extends BaseRestHandler {
      */
     @Override
     protected RestChannelConsumer prepareRequest(RestRequest request, NodeClient client) throws IOException {
-        // Extract and validate index name from request
         String indexName = request.param("index");
         if (Strings.isNullOrEmpty(indexName)) {
             throw new IllegalArgumentException("Index name is required");
@@ -91,52 +91,69 @@ public class RestKNNSamplingStatsHandler extends BaseRestHandler {
 
         log.info("Received stats request for index: {}", indexName);
 
-        return channel -> {
-            log.info("Preparing stats request for index: {}", indexName);
-            // Prepare and execute the stats request
-            client.admin().indices().prepareStats(indexName).clear().setDocs(true).setStore(true).execute(new ActionListener<>() {
+        return channel -> client.admin()
+            .indices()
+            .prepareStats(indexName)
+            .clear()
+            .setDocs(true)
+            .setStore(true)
+            .execute(new ActionListener<>() {
                 @Override
-                public void onResponse(IndicesStatsResponse indicesStatsResponse) {
-                    try {
-                        log.info("Received stats response for index: {}", indexName);
-                        XContentBuilder builder = channel.newBuilder();
-                        builder.startObject();
-
-                        // Process index statistics if available
-                        IndexStats indexStats = indicesStatsResponse.getIndex(indexName);
-                        if (indexStats != null) {
-                            log.info("Processing index stats for: {}", indexName);
-                            SegmentProfilerState.getIndexStats(indexStats, builder, environment);
-                        } else {
-                            log.warn("No stats found for index: {}", indexName);
-                            builder.field("error", "No stats found for index: " + indexName);
-                        }
-
-                        builder.endObject();
-                        channel.sendResponse(new BytesRestResponse(RestStatus.OK, builder));
-                    } catch (Exception e) {
-                        log.error("Error processing stats response", e);
-                        onFailure(e);
-                    }
+                public void onResponse(IndicesStatsResponse response) {
+                    onStatsResponse(response, indexName, channel);
                 }
 
-                /**
-                 * Handles failures in the stats request
-                 */
                 @Override
                 public void onFailure(Exception e) {
-                    log.error("Failed to get stats", e);
-                    try {
-                        XContentBuilder builder = channel.newBuilder();
-                        builder.startObject();
-                        builder.field("error", "Failed to get stats: " + e.getMessage());
-                        builder.endObject();
-                        channel.sendResponse(new BytesRestResponse(RestStatus.INTERNAL_SERVER_ERROR, builder));
-                    } catch (IOException ex) {
-                        log.error("Failed to send error response", ex);
-                    }
+                    onStatsFailure(e, channel);
                 }
             });
-        };
+    }
+
+    /**
+     * Processes the stats response
+     * @param response The stats response
+     * @param indexName The name of the index
+     * @param channel The REST channel to send the response
+     */
+    private void onStatsResponse(IndicesStatsResponse response, String indexName, RestChannel channel) {
+        try {
+            log.info("Received stats response for index: {}", indexName);
+            XContentBuilder builder = channel.newBuilder();
+            builder.startObject();
+
+            IndexStats indexStats = response.getIndex(indexName);
+            if (indexStats != null) {
+                log.info("Processing index stats for: {}", indexName);
+                SegmentProfilerState.getIndexStats(indexStats, builder, environment);
+            } else {
+                log.warn("No stats found for index: {}", indexName);
+                builder.field("error", "No stats found for index: " + indexName);
+            }
+
+            builder.endObject();
+            channel.sendResponse(new BytesRestResponse(RestStatus.OK, builder));
+        } catch (Exception e) {
+            log.error("Error processing stats response", e);
+            onStatsFailure(e, channel);
+        }
+    }
+
+    /**
+     * Handles failures in processing the stats response
+     * @param e The exception that occurred
+     * @param channel The REST channel to send the error response
+     */
+    private void onStatsFailure(Exception e, RestChannel channel) {
+        log.error("Failed to get stats", e);
+        try {
+            XContentBuilder builder = channel.newBuilder();
+            builder.startObject();
+            builder.field("error", "Failed to get stats: " + e.getMessage());
+            builder.endObject();
+            channel.sendResponse(new BytesRestResponse(RestStatus.INTERNAL_SERVER_ERROR, builder));
+        } catch (IOException ex) {
+            log.error("Failed to send error response", ex);
+        }
     }
 }
