@@ -1,36 +1,23 @@
-/*
- * Copyright OpenSearch Contributors
- * SPDX-License-Identifier: Apache-2.0
- */
-
 package org.opensearch.knn.profiler;
 
 import lombok.Getter;
 import lombok.extern.log4j.Log4j2;
 import org.apache.commons.math3.stat.descriptive.SummaryStatistics;
-import org.apache.lucene.index.IndexFileNames;
-import org.apache.lucene.index.LeafReaderContext;
-import org.apache.lucene.index.SegmentReader;
-import org.apache.lucene.index.SegmentWriteState;
+import org.apache.lucene.index.*;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FilterDirectory;
 import org.apache.lucene.store.FSDirectory;
 import org.opensearch.action.admin.indices.stats.IndexStats;
 import org.opensearch.action.admin.indices.stats.ShardStats;
-import org.opensearch.common.lucene.Lucene;
 import org.opensearch.core.xcontent.XContentBuilder;
 import org.opensearch.common.xcontent.XContentFactory;
 import org.opensearch.env.Environment;
-import org.opensearch.index.mapper.MappedFieldType;
-import org.opensearch.knn.index.mapper.KNNVectorFieldMapper;
-import org.opensearch.index.IndexService;
-import org.opensearch.index.engine.Engine;
-import org.opensearch.index.mapper.MappedFieldType;
-import org.opensearch.index.mapper.MapperService;
 import org.opensearch.knn.index.codec.util.KNNCodecUtil;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
-import java.time.format.DateTimeFormatter;
-import java.time.Instant;
+import org.opensearch.common.xcontent.json.JsonXContent;
+import org.opensearch.core.xcontent.XContentParser;
+import org.opensearch.core.xcontent.NamedXContentRegistry;
+import org.opensearch.common.xcontent.LoggingDeprecationHandler;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -38,370 +25,281 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.text.DecimalFormat;
-import java.util.*;
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Supplier;
-import org.apache.lucene.index.LeafReaderContext;
-import org.apache.lucene.index.SegmentReader;
-import org.apache.lucene.index.FieldInfo;
-import org.opensearch.common.lucene.Lucene;
-import org.opensearch.index.mapper.MapperService;
-import org.opensearch.index.mapper.MappedFieldType;
-import org.opensearch.knn.index.mapper.KNNVectorFieldMapper;
-import org.apache.lucene.store.Directory;
-import org.opensearch.common.xcontent.json.JsonXContent;
-import org.opensearch.core.xcontent.XContentParser;
-import org.opensearch.core.xcontent.NamedXContentRegistry;
-import java.nio.charset.StandardCharsets;
-import org.opensearch.common.xcontent.LoggingDeprecationHandler;
-import java.util.Map;
 
 import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
 
 /**
- * SegmentProfilerState is responsible for analyzing and profiling vector data within segments.
- * This class calculates statistical measurements for each dimension of the vectors in a segment.
+ * This class handles the profiling and statistical analysis of KNN vector segments
+ * in OpenSearch. It provides functionality to collect, process, and store statistical
+ * information about vector dimensions across different shards and segments.
  */
 @Log4j2
 public class SegmentProfilerState {
-    private static final String VECTOR_STATS_CODEC_NAME = "VectorStatsFormat";
     private static final String VECTOR_STATS_EXTENSION = "json";
+    private static final String VECTOR_OUTPUT_FILE = "NativeEngines990KnnVectors";
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("#.####");
-    private static final int CURRENT_VERSION = 1;
     private static final DateTimeFormatter ISO_FORMATTER = DateTimeFormatter.ISO_INSTANT;
 
     @Getter
     private final List<SummaryStatistics> statistics;
 
+    /**
+     * Constructor initializing the statistics collection
+     * @param statistics List of summary statistics for vector dimensions
+     */
     public SegmentProfilerState(final List<SummaryStatistics> statistics) {
         this.statistics = statistics;
     }
 
     /**
-     * Writes statistics to a file in JSON format
+     * Writes statistical data to a JSON file.
+     * Stores raw statistics data to disk for later retrieval.
+     * Called during vector indexing/processing.
+     * @param outputFile Path to output file
+     * @param statistics List of statistics to write
+     * @param fieldName Name of the field being processed
+     * @param vectorCount Total number of vectors
      */
     private static void writeStatsToFile(Path outputFile, List<SummaryStatistics> statistics, String fieldName, int vectorCount)
         throws IOException {
+        // Create parent directories if they don't exist
         Files.createDirectories(outputFile.getParent());
 
-        XContentBuilder jsonBuilder = XContentFactory.jsonBuilder();
-        jsonBuilder.prettyPrint();
-        jsonBuilder.startObject();
-        {
-            jsonBuilder.field("timestamp", ISO_FORMATTER.format(Instant.now()));
-            jsonBuilder.field("fieldName", fieldName);
-            jsonBuilder.field("vectorCount", vectorCount);
-            jsonBuilder.field("dimension", statistics.size());
-
-            jsonBuilder.startArray("dimensions");
+        try (XContentBuilder jsonBuilder = XContentFactory.jsonBuilder()) {
+            // Build JSON structure
+            jsonBuilder.prettyPrint()
+                .startObject()
+                // Add metadata
+                .field("timestamp", ISO_FORMATTER.format(Instant.now()))
+                .field("fieldName", fieldName)
+                .field("vectorCount", vectorCount)
+                .field("dimension", statistics.size())
+                .startArray("dimensions");
+            // Add statistics for each dimension
             for (int i = 0; i < statistics.size(); i++) {
                 SummaryStatistics stats = statistics.get(i);
-                jsonBuilder.startObject();
-                {
-                    jsonBuilder.field("dimension", i);
-                    jsonBuilder.field("count", stats.getN());
-                    jsonBuilder.field("min", Double.parseDouble(DECIMAL_FORMAT.format(stats.getMin())));
-                    jsonBuilder.field("max", Double.parseDouble(DECIMAL_FORMAT.format(stats.getMax())));
-                    jsonBuilder.field("sum", Double.parseDouble(DECIMAL_FORMAT.format(stats.getSum())));
-                    jsonBuilder.field("mean", Double.parseDouble(DECIMAL_FORMAT.format(stats.getMean())));
-                    jsonBuilder.field("standardDeviation", Double.parseDouble(DECIMAL_FORMAT.format(Math.sqrt(stats.getVariance()))));
-                    jsonBuilder.field("variance", Double.parseDouble(DECIMAL_FORMAT.format(stats.getVariance())));
-                }
-                jsonBuilder.endObject();
+                jsonBuilder.startObject()
+                    .field("dimension", i)
+                    .field("count", stats.getN())
+                    .field("min", formatDouble(stats.getMin()))
+                    .field("max", formatDouble(stats.getMax()))
+                    .field("sum", formatDouble(stats.getSum()))
+                    .field("mean", formatDouble(stats.getMean()))
+                    .field("standardDeviation", formatDouble(Math.sqrt(stats.getVariance())))
+                    .field("variance", formatDouble(stats.getVariance()))
+                    .endObject();
             }
-            jsonBuilder.endArray();
-        }
-        jsonBuilder.endObject();
 
-        Files.write(
-            outputFile,
-            jsonBuilder.toString().getBytes(StandardCharsets.UTF_8),
-            StandardOpenOption.CREATE,
-            StandardOpenOption.APPEND
-        );
-    }
-
-    /**
-     * Reads statistics from a JSON file
-     */
-    public static List<SummaryStatistics> readStatsFromFile(Path statsFile) throws IOException {
-        if (!Files.exists(statsFile)) {
-            throw new IOException("Stats file does not exist: " + statsFile);
-        }
-
-        List<SummaryStatistics> statistics = new ArrayList<>();
-        String content = new String(Files.readAllBytes(statsFile), StandardCharsets.UTF_8);
-
-        try {
-            // Parse the JSON content and reconstruct statistics
-            // This is a placeholder - implement actual JSON parsing based on your needs
-            log.info("Reading stats from file: {}", statsFile);
-
-            // Return reconstructed statistics
-            return statistics;
-        } catch (Exception e) {
-            log.error("Error reading stats from file: {}", statsFile, e);
-            throw new IOException("Failed to read stats from file", e);
+            jsonBuilder.endArray().endObject();
+            Files.write(
+                outputFile,
+                jsonBuilder.toString().getBytes(StandardCharsets.UTF_8),
+                StandardOpenOption.CREATE,
+                StandardOpenOption.APPEND
+            );
         }
     }
 
     /**
-     * Profiles vectors and generates statistics
+     * Profiles vectors in a segment and collects statistical information
+     * @param knnVectorValuesSupplier Supplier for vector values
+     * @param segmentWriteState State of the segment being written
+     * @param fieldName Name of the field being processed
+     * @return SegmentProfilerState containing collected statistics
      */
     public static SegmentProfilerState profileVectors(
         final Supplier<KNNVectorValues<?>> knnVectorValuesSupplier,
         final SegmentWriteState segmentWriteState,
         final String fieldName
     ) throws IOException {
-        log.info("Starting vector profiling for field: {}", fieldName);
-
+        // Get vector values from the supplier
         KNNVectorValues<?> vectorValues = knnVectorValuesSupplier.get();
         if (vectorValues == null) {
-            log.warn("No vector values available for field: {}", fieldName);
             return new SegmentProfilerState(new ArrayList<>());
         }
-
+        // Initialize new profiler state and vector values
         SegmentProfilerState profilerState = new SegmentProfilerState(new ArrayList<>());
+        KNNCodecUtil.initializeVectorValues(vectorValues);
+        int dimension = vectorValues.dimension();
+        int vectorCount = 0;
 
-        try {
-            // Process vectors and collect statistics
-            KNNCodecUtil.initializeVectorValues(vectorValues);
-            int dimension = vectorValues.dimension();
-            int vectorCount = 0;
-
-            // Initialize statistics collectors
-            for (int i = 0; i < dimension; i++) {
-                profilerState.statistics.add(new SummaryStatistics());
-            }
-
-            // Process all vectors
-            while (vectorValues.docId() != NO_MORE_DOCS) {
-                vectorCount++;
-                Object vector = vectorValues.getVector();
-                if (vector instanceof float[]) {
-                    float[] floatVector = (float[]) vector;
-                    for (int j = 0; j < floatVector.length; j++) {
-                        profilerState.statistics.get(j).addValue(floatVector[j]);
-                    }
-                } else if (vector instanceof byte[]) {
-                    byte[] byteVector = (byte[]) vector;
-                    for (int j = 0; j < byteVector.length; j++) {
-                        profilerState.statistics.get(j).addValue(byteVector[j] & 0xFF);
-                    }
-                }
-                vectorValues.nextDoc();
-            }
-
-            log.info("Processed {} vectors with {} dimensions for field {}", vectorCount, dimension, fieldName);
-
-            // Create stats file name
-            String statsFileName = IndexFileNames.segmentFileName(
-                segmentWriteState.segmentInfo.name,
-                segmentWriteState.segmentSuffix,
-                VECTOR_STATS_EXTENSION
-            );
-
-            // Get directory path and create output file
-            Directory directory = segmentWriteState.directory;
-            while (directory instanceof FilterDirectory) {
-                directory = ((FilterDirectory) directory).getDelegate();
-            }
-
-            if (!(directory instanceof FSDirectory)) {
-                throw new IOException("Expected FSDirectory but found " + directory.getClass().getSimpleName());
-            }
-
-            Path directoryPath = ((FSDirectory) directory).getDirectory();
-            Path statsFile = directoryPath.resolve(statsFileName);
-
-            // Write statistics to file
-            writeStatsToFile(statsFile, profilerState.statistics, fieldName, vectorCount);
-
-            log.info("Successfully wrote vector stats for field {} to file: {}", fieldName, statsFileName);
-
-            return profilerState;
-
-        } catch (Exception e) {
-            log.error("Error during vector profiling for field {}: ", fieldName, e);
-            throw e;
+        // Create statistics objects for each dimension
+        for (int i = 0; i < dimension; i++) {
+            profilerState.statistics.add(new SummaryStatistics());
         }
+
+        // Process each vector in the segment
+        while (vectorValues.docId() != NO_MORE_DOCS) {
+            vectorCount++;
+            Object vector = vectorValues.getVector();
+            processVector(vector, profilerState.statistics);
+            vectorValues.nextDoc();
+        }
+
+        // Generate filename and write statistics to file
+        String statsFileName = IndexFileNames.segmentFileName(
+            segmentWriteState.segmentInfo.name,
+            segmentWriteState.segmentSuffix,
+            VECTOR_STATS_EXTENSION
+        );
+
+        Directory directory = getUnderlyingDirectory(segmentWriteState.directory);
+        Path statsFile = ((FSDirectory) directory).getDirectory().resolve(statsFileName);
+        writeStatsToFile(statsFile, profilerState.statistics, fieldName, vectorCount);
+
+        return profilerState;
     }
 
-    // Add to SegmentProfilerState.java
-
-    public static void getIndexStats(IndexService indexService, XContentBuilder builder) throws IOException {
-        builder.field("vector_sample_count", getTotalVectorCount(indexService));
-        builder.field("last_updated", ISO_FORMATTER.format(Instant.now()));
-
-        builder.startObject("field_stats");
-        for (String fieldName : getKNNFields(indexService)) {
-            builder.startObject(fieldName);
-
-            // Get dimension stats
-            builder.startArray("dimension_stats");
-            List<SummaryStatistics> stats = getFieldStats(indexService, fieldName);
-            for (SummaryStatistics stat : stats) {
-                builder.startObject();
-                builder.field("min", stat.getMin());
-                builder.field("max", stat.getMax());
-                builder.field("mean", stat.getMean());
-                builder.field("variance", stat.getVariance());
-                builder.endObject();
-            }
-            builder.endArray();
-
-            // Add distance distribution
-            builder.startObject("distance_distribution");
-            addDistanceStats(indexService, fieldName, builder);
-            builder.endObject();
-
-            // Add other metrics
-            builder.field("sparsity", calculateSparsity(stats));
-            builder.field("clustering_coefficient", calculateClusteringCoefficient(stats));
-
-            builder.endObject();
-        }
-        builder.endObject();
-    }
-
+    /**
+     * Generates index-level statistics and writes them to the XContentBuilder.
+     * Aggregates data from all shards and provides current view
+     * @param indexStats Statistics for the index
+     * @param builder XContentBuilder for response construction
+     * @param environment OpenSearch environment
+     */
     public static void getIndexStats(IndexStats indexStats, XContentBuilder builder, Environment environment) throws IOException {
         try {
-            log.info("Starting to gather index stats for index: {}", indexStats.getIndex());
+            // Build index summary section
+            builder.startObject("index_summary")
+                .field("doc_count", indexStats.getTotal().getDocs().getCount())
+                .field("size_in_bytes", indexStats.getTotal().getStore().getSizeInBytes())
+                .field("timestamp", ISO_FORMATTER.format(Instant.now()))
+                .endObject();
 
-            // Basic index statistics
-            builder.startObject("index_summary");
-            builder.field("doc_count", indexStats.getTotal().getDocs().getCount());
-            builder.field("size_in_bytes", indexStats.getTotal().getStore().getSizeInBytes());
-            builder.field("timestamp", ISO_FORMATTER.format(Instant.now()));
-            builder.endObject();
+            builder.startObject("vector_stats").field("sample_size", indexStats.getTotal().getDocs().getCount());
 
-            // Vector statistics with summary stats
-            builder.startObject("vector_stats");
-            builder.field("sample_size", indexStats.getTotal().getDocs().getCount());
-
-            // Add summary statistics
             builder.startObject("summary_stats");
-
-            // Get the statistics from stored files
             List<SummaryStatistics> stats = getSummaryStatisticsForIndex(indexStats, environment);
 
             if (!stats.isEmpty()) {
-                log.info("Found {} dimensions with statistics", stats.size());
+                // Write dimension-wise statistics
                 builder.startArray("dimensions");
                 for (int i = 0; i < stats.size(); i++) {
                     SummaryStatistics dimStats = stats.get(i);
-                    builder.startObject();
-                    builder.field("dimension", i);
-                    builder.field("min", formatDouble(dimStats.getMin()));
-                    builder.field("max", formatDouble(dimStats.getMax()));
-                    builder.field("mean", formatDouble(dimStats.getMean()));
-                    builder.field("std_dev", formatDouble(dimStats.getStandardDeviation()));
-                    builder.field("variance", formatDouble(dimStats.getVariance()));
-                    builder.field("count", dimStats.getN());
-                    builder.field("sum", formatDouble(dimStats.getSum()));
-                    builder.endObject();
+                    builder.startObject()
+                        .field("dimension", i)
+                        .field("count", dimStats.getN())
+                        .field("min", formatDouble(dimStats.getMin()))
+                        .field("max", formatDouble(dimStats.getMax()))
+                        .field("sum", formatDouble(dimStats.getSum()))
+                        .field("mean", formatDouble(dimStats.getMean()))
+                        .field("standardDeviation", formatDouble(dimStats.getStandardDeviation()))
+                        .field("variance", formatDouble(dimStats.getVariance()))
+                        .endObject();
                 }
                 builder.endArray();
             } else {
-                log.warn("No statistics found for index: {}", indexStats.getIndex());
                 builder.field("status", "No statistics available");
             }
 
-            builder.endObject(); // end summary_stats
-            builder.endObject(); // end vector_stats
+            builder.endObject().endObject();
 
         } catch (Exception e) {
-            log.error("Error generating index stats", e);
-            builder.startObject("error");
-            builder.field("message", "Failed to get statistics: " + e.getMessage());
-            builder.endObject();
+            builder.startObject("error").field("message", "Failed to get statistics: " + e.getMessage()).endObject();
         }
     }
 
+    /**
+     * Collects summary statistics for an entire index
+     * @param indexStats Statistics for the index
+     * @param environment OpenSearch environment
+     * @return List of summary statistics for each dimension
+     */
     private static List<SummaryStatistics> getSummaryStatisticsForIndex(IndexStats indexStats, Environment environment) {
         List<SummaryStatistics> stats = new ArrayList<>();
-        try {
-            ShardStats[] shardStats = indexStats.getShards();
-            log.info("Processing {} shards for index: {}", shardStats != null ? shardStats.length : 0, indexStats.getIndex());
+        ShardStats[] shardStats = indexStats.getShards();
 
-            if (shardStats != null) {
-                for (ShardStats shard : shardStats) {
-                    try {
-                        int shardId = shard.getShardRouting().shardId().getId();
-                        String indexUUID = shard.getShardRouting().shardId().getIndex().getUUID();
-
-                        // Construct the path using nodes/0/indices structure
-                        Path indexPath = environment.dataFiles()[0].resolve("nodes")
-                            .resolve("0")
-                            .resolve("indices")
-                            .resolve(indexUUID)
-                            .resolve(String.valueOf(shardId))
-                            .resolve("index");
-
-                        log.info("Looking for stats in directory: {}", indexPath);
-
-                        // List all files in the directory
-                        if (Files.exists(indexPath)) {
-                            log.info("Files in directory {}:", indexPath);
-                            Files.list(indexPath).forEach(path -> {
-                                log.info("Found file: {}", path.getFileName());
-                                // Check if file matches the pattern we're looking for
-                                if (path.getFileName().toString().contains("NativeEngines990KnnVectors")) {
-                                    log.info("Found potential stats file: {}", path.getFileName());
-                                    try {
-                                        String jsonContent = Files.readString(path);
-                                        log.info("Successfully read content from file: {}", path);
-                                        log.info(
-                                            "Content preview: {}",
-                                            jsonContent.length() > 100 ? jsonContent.substring(0, 100) + "..." : jsonContent
-                                        );
-
-                                        List<SummaryStatistics> shardStatsData = parseStatsFromJson(jsonContent);
-                                        if (!shardStatsData.isEmpty()) {
-                                            log.info("Successfully parsed statistics from file: {}", path);
-                                            if (stats.isEmpty()) {
-                                                stats.addAll(shardStatsData);
-                                            } else {
-                                                // Merge statistics
-                                                for (int i = 0; i < stats.size(); i++) {
-                                                    SummaryStatistics existing = stats.get(i);
-                                                    SummaryStatistics current = shardStatsData.get(i);
-                                                    existing.addValue(current.getSum());
-                                                    existing.addValue(current.getMin());
-                                                    existing.addValue(current.getMax());
-                                                }
-                                            }
-                                        }
-                                    } catch (Exception e) {
-                                        log.error("Error reading or parsing file: {}", path, e);
-                                    }
-                                }
-                            });
-                        } else {
-                            log.warn("Directory does not exist: {}", indexPath);
-                            // Log parent directories to help debug
-                            Path parent = indexPath.getParent();
-                            while (parent != null && !parent.equals(environment.dataFiles()[0])) {
-                                log.info("Checking parent directory: {}", parent);
-                                if (Files.exists(parent)) {
-                                    log.info("Contents of {}: ", parent);
-                                    Files.list(parent).forEach(p -> log.info("  - {}", p.getFileName()));
-                                } else {
-                                    log.info("Parent directory does not exist: {}", parent);
-                                }
-                                parent = parent.getParent();
-                            }
-                        }
-                    } catch (Exception e) {
-                        log.error("Error processing shard stats: {}", e.getMessage(), e);
+        if (shardStats != null) {
+            // Process each shard in the index
+            for (ShardStats shard : shardStats) {
+                try {
+                    Path indexPath = getShardIndexPath(shard, environment);
+                    if (Files.exists(indexPath)) {
+                        processShardDirectory(indexPath, stats);
                     }
+                } catch (Exception e) {
+                    log.error("Error processing shard stats", e);
                 }
             }
-        } catch (Exception e) {
-            log.error("Error reading statistics files", e);
         }
         return stats;
     }
 
+    /**
+     * Determines the path to a shard's index directory
+     * @param shard Shard statistics
+     * @param environment OpenSearch environment
+     * @return Path to the shard's index directory
+     */
+    private static Path getShardIndexPath(ShardStats shard, Environment environment) {
+        int shardId = shard.getShardRouting().shardId().getId();
+        String indexUUID = shard.getShardRouting().shardId().getIndex().getUUID();
+        return environment.dataFiles()[0].resolve("nodes")
+            .resolve("0")
+            .resolve("indices")
+            .resolve(indexUUID)
+            .resolve(String.valueOf(shardId))
+            .resolve("index");
+    }
+
+    /**
+     * Processes statistics files in a shard directory
+     * @param indexPath Path to the index directory
+     * @param stats List to store collected statistics
+     */
+    private static void processShardDirectory(Path indexPath, List<SummaryStatistics> stats) throws IOException {
+        Files.list(indexPath).filter(path -> path.getFileName().toString().contains(VECTOR_OUTPUT_FILE)).forEach(path -> {
+            try {
+                String jsonContent = Files.readString(path);
+                List<SummaryStatistics> shardStats = parseStatsFromJson(jsonContent);
+                mergeStatistics(stats, shardStats);
+            } catch (IOException e) {
+                log.error("Error processing file: " + path, e);
+            }
+        });
+    }
+
+    /**
+     * Merges statistics from source into target
+     * @param target Target statistics list
+     * @param source Source statistics list
+     */
+    private static void mergeStatistics(List<SummaryStatistics> target, List<SummaryStatistics> source) {
+        if (target.isEmpty()) {
+            for (SummaryStatistics sourceStat : source) {
+                SummaryStatistics newStat = new SummaryStatistics();
+                newStat.addValue(sourceStat.getMin());
+                if (sourceStat.getN() > 1) {
+                    newStat.addValue(sourceStat.getMax());
+                }
+                target.add(newStat);
+            }
+        } else {
+            for (int i = 0; i < target.size(); i++) {
+                SummaryStatistics targetStat = target.get(i);
+                SummaryStatistics sourceStat = source.get(i);
+
+                // Add all values from source statistics
+                if (sourceStat.getN() > 0) {
+                    targetStat.addValue(sourceStat.getMin());
+                    if (sourceStat.getN() > 1) {
+                        targetStat.addValue(sourceStat.getMax());
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Parses statistics from JSON content
+     * @param jsonContent JSON string containing statistics
+     * @return List of parsed summary statistics
+     */
     private static List<SummaryStatistics> parseStatsFromJson(String jsonContent) throws IOException {
         List<SummaryStatistics> statistics = new ArrayList<>();
 
@@ -413,198 +311,130 @@ public class SegmentProfilerState {
             )
         ) {
 
-            XContentParser.Token token;
-            String currentFieldName = null;
-
-            while ((token = parser.nextToken()) != null) {
-                if (token == XContentParser.Token.FIELD_NAME) {
-                    currentFieldName = parser.currentName();
-                } else if ("dimensions".equals(currentFieldName) && token == XContentParser.Token.START_ARRAY) {
-                    while (parser.nextToken() != XContentParser.Token.END_ARRAY) {
-                        if (parser.currentToken() == XContentParser.Token.START_OBJECT) {
-                            SummaryStatistics stats = new SummaryStatistics();
-                            double min = Double.MAX_VALUE;
-                            double max = Double.MIN_VALUE;
-                            double sum = 0;
-                            long count = 0;
-
-                            while (parser.nextToken() != XContentParser.Token.END_OBJECT) {
-                                String fieldName = parser.currentName();
-                                parser.nextToken();
-
-                                switch (fieldName) {
-                                    case "min":
-                                        min = parser.doubleValue();
-                                        break;
-                                    case "max":
-                                        max = parser.doubleValue();
-                                        break;
-                                    case "sum":
-                                        sum = parser.doubleValue();
-                                        break;
-                                    case "count":
-                                        count = parser.longValue();
-                                        break;
-                                }
-                            }
-
-                            // Add the actual values to reconstruct the statistics
-                            if (count > 0) {
-                                // Add min and max values
-                                stats.addValue(min);
-                                if (count > 1) {
-                                    stats.addValue(max);
-                                }
-
-                                // If there are values between min and max, add the mean value
-                                // for the remaining count to maintain the correct sum and distribution
-                                if (count > 2) {
-                                    double remainingMean = (sum - min - max) / (count - 2);
-                                    for (int i = 0; i < count - 2; i++) {
-                                        stats.addValue(remainingMean);
-                                    }
-                                }
-                            }
-
-                            statistics.add(stats);
-                        }
-                    }
-                }
-            }
+            parseJsonContent(parser, statistics);
         }
-
         return statistics;
     }
 
-    private static double formatDouble(double value) {
-        // Format to 4 decimal places
-        return Double.parseDouble(DECIMAL_FORMAT.format(value));
-    }
+    /**
+     * Parses JSON content and updates statistics
+     * @param parser XContentParser for JSON content
+     * @param statistics List of statistics to update
+     */
+    private static void parseJsonContent(XContentParser parser, List<SummaryStatistics> statistics) throws IOException {
+        XContentParser.Token token;
+        String currentFieldName = null;
 
-    private static double calculateSparsity(List<SummaryStatistics> stats) {
-        // Implementation for calculating vector sparsity
-        return stats.stream().mapToDouble(s -> s.getN() > 0 ? s.getSum() / s.getN() : 0).filter(v -> Math.abs(v) < 0.0001).count()
-            / (double) stats.size();
-    }
-
-    private static double calculateClusteringCoefficient(List<SummaryStatistics> stats) {
-        // Implementation for calculating clustering coefficient
-        // This is a simplified version - you may want to implement a more sophisticated algorithm
-        return stats.stream().mapToDouble(SummaryStatistics::getVariance).average().orElse(0.0);
-    }
-
-    private static void addDistanceStats(IndexService indexService, String fieldName, XContentBuilder builder) throws IOException {
-        // Calculate distance statistics
-        builder.field("min_distance", 0.0123);  // Replace with actual calculation
-        builder.field("max_distance", 1.9876);  // Replace with actual calculation
-        builder.field("mean_distance", 0.7654); // Replace with actual calculation
-
-        builder.startObject("percentiles");
-        builder.field("p50", 0.7123);  // Replace with actual percentile calculation
-        builder.field("p75", 1.0234);
-        builder.field("p90", 1.3456);
-        builder.field("p99", 1.7890);
-        builder.endObject();
-    }
-
-    private static long getTotalVectorCount(IndexService indexService) throws IOException {
-        long totalCount = 0;
-        for (String fieldName : getKNNFields(indexService)) {
-            // Use IndexShard's acquireSearcher() directly
-            try (Engine.Searcher searcher = indexService.getShard(0).acquireSearcher("knn-stats")) {
-                for (LeafReaderContext leafContext : searcher.getIndexReader().leaves()) {
-                    SegmentReader segmentReader = Lucene.segmentReader(leafContext.reader());
-                    FieldInfo fieldInfo = segmentReader.getFieldInfos().fieldInfo(fieldName);
-                    if (fieldInfo != null && fieldInfo.attributes().containsKey(KNNVectorFieldMapper.KNN_FIELD)) {
-                        totalCount += segmentReader.numDocs();
-                    }
-                }
+        while ((token = parser.nextToken()) != null) {
+            if (token == XContentParser.Token.FIELD_NAME) {
+                currentFieldName = parser.currentName();
+            } else if ("dimensions".equals(currentFieldName) && token == XContentParser.Token.START_ARRAY) {
+                parseDimensions(parser, statistics);
             }
         }
-        return totalCount;
     }
 
-    private static List<String> getKNNFields(IndexService indexService) {
-        List<String> knnFields = new ArrayList<>();
-        MapperService mapperService = indexService.mapperService();
+    /**
+     * Parses dimensions from JSON content
+     * @param parser XContentParser for JSON content
+     * @param statistics List of statistics to update
+     */
+    private static void parseDimensions(XContentParser parser, List<SummaryStatistics> statistics) throws IOException {
+        while (parser.nextToken() != XContentParser.Token.END_ARRAY) {
+            if (parser.currentToken() == XContentParser.Token.START_OBJECT) {
+                statistics.add(parseDimensionStats(parser));
+            }
+        }
+    }
 
-        // Convert Iterable to Map
-        Map<String, MappedFieldType> fieldTypes = new HashMap<>();
-        mapperService.fieldTypes().forEach(fieldType -> fieldTypes.put(fieldType.name(), fieldType));
+    /**
+     * Parses a dimension's statistics from JSON content
+     * @param parser XContentParser for JSON content
+     * @return SummaryStatistics for the parsed dimension
+     */
+    private static SummaryStatistics parseDimensionStats(XContentParser parser) throws IOException {
+        SummaryStatistics stats = new SummaryStatistics();
+        double min = Double.MAX_VALUE;
+        double max = Double.MIN_VALUE;
+        double sum = 0;
+        long count = 0;
 
-        // Filter for KNN vector fields
-        for (Map.Entry<String, MappedFieldType> entry : fieldTypes.entrySet()) {
-            // Check if field is a KNN vector field using the content type
-            if (KNNVectorFieldMapper.CONTENT_TYPE.equals(entry.getValue().typeName())) {
-                knnFields.add(entry.getKey());
+        while (parser.nextToken() != XContentParser.Token.END_OBJECT) {
+            String fieldName = parser.currentName();
+            parser.nextToken();
+
+            switch (fieldName) {
+                case "min":
+                    min = parser.doubleValue();
+                    break;
+                case "max":
+                    max = parser.doubleValue();
+                    break;
+                case "sum":
+                    sum = parser.doubleValue();
+                    break;
+                case "count":
+                    count = parser.longValue();
+                    break;
             }
         }
 
-        return knnFields;
-    }
-
-    private static List<SummaryStatistics> getFieldStats(IndexService indexService, String fieldName) throws IOException {
-        List<SummaryStatistics> fieldStats = new ArrayList<>();
-
-        // Use IndexShard's acquireSearcher() directly
-        try (Engine.Searcher searcher = indexService.getShard(0).acquireSearcher("knn-stats")) {
-            for (LeafReaderContext leafContext : searcher.getIndexReader().leaves()) {
-                SegmentReader segmentReader = Lucene.segmentReader(leafContext.reader());
-                String statsFileName = getStatsFileName(segmentReader, fieldName);
-
-                if (statsFileName != null) {
-                    Path statsFile = getStatsFilePath(segmentReader, statsFileName);
-                    if (Files.exists(statsFile)) {
-                        List<SummaryStatistics> segmentStats = readStatsFromFile(statsFile);
-                        if (fieldStats.isEmpty()) {
-                            fieldStats.addAll(segmentStats);
-                        } else {
-                            // Merge statistics from multiple segments
-                            for (int i = 0; i < segmentStats.size(); i++) {
-                                SummaryStatistics existing = fieldStats.get(i);
-                                SummaryStatistics current = segmentStats.get(i);
-
-                                // Clear existing stats
-                                existing.clear();
-
-                                // Add all values from both statistics
-                                existing.addValue(current.getMin());
-                                existing.addValue(current.getMax());
-
-                                // Add the mean value weighted by count
-                                double meanValue = current.getMean();
-                                for (int j = 0; j < current.getN(); j++) {
-                                    existing.addValue(meanValue);
-                                }
-                            }
-                        }
-                    }
+        if (count > 0) {
+            stats.addValue(min);
+            if (count > 1) {
+                stats.addValue(max);
+            }
+            if (count > 2) {
+                double remainingMean = (sum - min - max) / (count - 2);
+                for (int i = 0; i < count - 2; i++) {
+                    stats.addValue(remainingMean);
                 }
             }
         }
 
-        return fieldStats;
+        return stats;
     }
 
-    private static String getStatsFileName(SegmentReader segmentReader, String fieldName) {
-        // Use segmentInfo.info.name instead of just name
-        return IndexFileNames.segmentFileName(
-            segmentReader.getSegmentInfo().info.name,
-            "", // Empty string instead of getSegmentSuffix()
-            VECTOR_STATS_EXTENSION
-        );
+    /**
+     * Processes a vector and updates statistics
+     * @param vector Vector to process (float[] or byte[])
+     * @param statistics List of statistics to update
+     */
+    private static void processVector(Object vector, List<SummaryStatistics> statistics) {
+        if (vector instanceof float[]) {
+            float[] floatVector = (float[]) vector;
+            for (int j = 0; j < floatVector.length; j++) {
+                statistics.get(j).addValue(floatVector[j]);
+            }
+        } else if (vector instanceof byte[]) {
+            byte[] byteVector = (byte[]) vector;
+            for (int j = 0; j < byteVector.length; j++) {
+                statistics.get(j).addValue(byteVector[j] & 0xFF);
+            }
+        }
     }
 
-    private static Path getStatsFilePath(SegmentReader segmentReader, String statsFileName) throws IOException {
-        Directory directory = segmentReader.directory();
+    /**
+     * Gets the underlying FSDirectory from a potentially wrapped Directory
+     * @param directory Input directory
+     * @return Underlying FSDirectory
+     */
+    private static Directory getUnderlyingDirectory(Directory directory) throws IOException {
         while (directory instanceof FilterDirectory) {
             directory = ((FilterDirectory) directory).getDelegate();
         }
-
         if (!(directory instanceof FSDirectory)) {
             throw new IOException("Expected FSDirectory but found " + directory.getClass().getSimpleName());
         }
+        return directory;
+    }
 
-        return ((FSDirectory) directory).getDirectory().resolve(statsFileName);
+    /**
+     * Formats a double value according to the specified decimal format
+     * @param value Double value to format
+     * @return Formatted double value
+     */
+    private static double formatDouble(double value) {
+        return Double.parseDouble(DECIMAL_FORMAT.format(value));
     }
 }
