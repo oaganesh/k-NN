@@ -81,7 +81,7 @@ import org.opensearch.knn.plugin.transport.UpdateModelGraveyardAction;
 import org.opensearch.knn.plugin.transport.UpdateModelGraveyardTransportAction;
 import org.opensearch.knn.plugin.transport.UpdateModelMetadataAction;
 import org.opensearch.knn.plugin.transport.UpdateModelMetadataTransportAction;
-import org.opensearch.knn.profiler.RestKNNSamplingStatsHandler;
+import org.opensearch.knn.plugin.rest.RestKNNSamplingStatsHandler;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationStateCache;
 import org.opensearch.knn.training.TrainingJobClusterStateListener;
 import org.opensearch.knn.training.TrainingJobRunner;
@@ -254,12 +254,6 @@ public class KNNPlugin extends Plugin
             indexNameExpressionResolver
         );
 
-        // IndicesService indicesService = new IndicesService(
-        // settings,
-        // clusterService.getClusterSettings(),
-        // indexNameExpressionResolver,
-        // clusterService
-        // );
         RestKNNSamplingStatsHandler restKNNSamplingStatsHandler = new RestKNNSamplingStatsHandler(
             settings,
             clusterService,

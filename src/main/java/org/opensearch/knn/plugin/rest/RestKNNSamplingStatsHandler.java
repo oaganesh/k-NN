@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.profiler;
+package org.opensearch.knn.plugin.rest;
 
 import lombok.extern.log4j.Log4j2;
 import org.opensearch.action.admin.indices.stats.IndexStats;
@@ -17,6 +17,7 @@ import org.opensearch.core.xcontent.XContentBuilder;
 import org.opensearch.core.rest.RestStatus;
 import org.opensearch.env.Environment;
 import org.opensearch.knn.plugin.KNNPlugin;
+import org.opensearch.knn.profiler.SegmentProfilerState;
 import org.opensearch.rest.BaseRestHandler;
 import org.opensearch.rest.BytesRestResponse;
 import org.opensearch.rest.RestRequest;
