@@ -440,7 +440,7 @@ public class SegmentProfilerState {
      * @param value Double value to format
      * @return Formatted double value
      */
-    static double formatDouble(double value) {
-        return Double.parseDouble(DECIMAL_FORMAT.format(value));
+    public static double formatDouble(double value) {
+        return Math.round(value * 10000.0) / 10000.0;
     }
 }
