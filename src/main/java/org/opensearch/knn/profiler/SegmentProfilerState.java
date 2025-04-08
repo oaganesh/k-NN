@@ -1,9 +1,15 @@
+/*
+ * Copyright OpenSearch Contributors
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 package org.opensearch.knn.profiler;
 
 import lombok.Getter;
 import lombok.extern.log4j.Log4j2;
 import org.apache.commons.math3.stat.descriptive.SummaryStatistics;
-import org.apache.lucene.index.*;
+import org.apache.lucene.index.IndexFileNames;
+import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FilterDirectory;
 import org.apache.lucene.store.FSDirectory;
@@ -269,7 +275,7 @@ public class SegmentProfilerState {
      * @param target Target statistics list
      * @param source Source statistics list
      */
-    private static void mergeStatistics(List<SummaryStatistics> target, List<SummaryStatistics> source) {
+    static void mergeStatistics(List<SummaryStatistics> target, List<SummaryStatistics> source) {
         if (target.isEmpty()) {
             for (SummaryStatistics sourceStat : source) {
                 SummaryStatistics newStat = new SummaryStatistics();
@@ -300,7 +306,7 @@ public class SegmentProfilerState {
      * @param jsonContent JSON string containing statistics
      * @return List of parsed summary statistics
      */
-    private static List<SummaryStatistics> parseStatsFromJson(String jsonContent) throws IOException {
+    static List<SummaryStatistics> parseStatsFromJson(String jsonContent) throws IOException {
         List<SummaryStatistics> statistics = new ArrayList<>();
 
         try (
@@ -400,7 +406,7 @@ public class SegmentProfilerState {
      * @param vector Vector to process (float[] or byte[])
      * @param statistics List of statistics to update
      */
-    private static void processVector(Object vector, List<SummaryStatistics> statistics) {
+    static void processVector(Object vector, List<SummaryStatistics> statistics) {
         if (vector instanceof float[]) {
             float[] floatVector = (float[]) vector;
             for (int j = 0; j < floatVector.length; j++) {
@@ -419,7 +425,7 @@ public class SegmentProfilerState {
      * @param directory Input directory
      * @return Underlying FSDirectory
      */
-    private static Directory getUnderlyingDirectory(Directory directory) throws IOException {
+    static Directory getUnderlyingDirectory(Directory directory) throws IOException {
         while (directory instanceof FilterDirectory) {
             directory = ((FilterDirectory) directory).getDelegate();
         }
@@ -434,7 +440,7 @@ public class SegmentProfilerState {
      * @param value Double value to format
      * @return Formatted double value
      */
-    private static double formatDouble(double value) {
+    static double formatDouble(double value) {
         return Double.parseDouble(DECIMAL_FORMAT.format(value));
     }
 }
