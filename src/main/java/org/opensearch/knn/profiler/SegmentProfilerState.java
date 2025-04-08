@@ -406,7 +406,7 @@ public class SegmentProfilerState {
      * @param vector Vector to process (float[] or byte[])
      * @param statistics List of statistics to update
      */
-    static void processVector(Object vector, List<SummaryStatistics> statistics) {
+    static <T> void processVector(T vector, List<SummaryStatistics> statistics) {
         if (vector instanceof float[]) {
             float[] floatVector = (float[]) vector;
             for (int j = 0; j < floatVector.length; j++) {
