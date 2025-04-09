@@ -205,7 +205,6 @@ public class KNNPlugin extends Plugin
         Supplier<RepositoriesService> repositoriesServiceSupplier
     ) {
         this.clusterService = clusterService;
-        // this.indicesService = client.getInstanceFromNode(IndicesService.class);
         this.repositoriesServiceSupplier = repositoriesServiceSupplier;
         this.environment = environment;
 
@@ -260,7 +259,6 @@ public class KNNPlugin extends Plugin
             clusterService,
             indexNameExpressionResolver,
             this.environment
-            // indicesService
         );
         RestGetModelHandler restGetModelHandler = new RestGetModelHandler();
         RestDeleteModelHandler restDeleteModelHandler = new RestDeleteModelHandler();

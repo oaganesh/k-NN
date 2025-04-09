@@ -5,6 +5,7 @@
 
 package org.opensearch.knn.plugin.rest;
 
+import lombok.AllArgsConstructor;
 import lombok.extern.log4j.Log4j2;
 import org.opensearch.action.admin.indices.stats.IndexStats;
 import org.opensearch.action.admin.indices.stats.IndicesStatsResponse;
@@ -30,11 +31,14 @@ import java.util.List;
 import static org.opensearch.rest.RestRequest.Method.GET;
 
 @Log4j2
+@AllArgsConstructor
 /**
  * Rest handler for sampling stats endpoint
  */
 public class RestKNNSamplingStatsHandler extends BaseRestHandler {
-    // private final IndicesService indicesService;
+    private static final String INDEX_PARAM = "index";
+    private static final String FIELD_PARAM = "field";
+
     private final ClusterService clusterService;
     private final IndexNameExpressionResolver indexNameExpressionResolver;
     private final Environment environment;
@@ -51,9 +55,7 @@ public class RestKNNSamplingStatsHandler extends BaseRestHandler {
         ClusterService clusterService,
         IndexNameExpressionResolver indexNameExpressionResolver,
         Environment environment
-        // IndicesService indicesService
     ) {
-        // this.indicesService = indicesService;
         this.clusterService = clusterService;
         this.indexNameExpressionResolver = indexNameExpressionResolver;
         this.environment = environment;
@@ -84,12 +86,14 @@ public class RestKNNSamplingStatsHandler extends BaseRestHandler {
      */
     @Override
     protected RestChannelConsumer prepareRequest(RestRequest request, NodeClient client) throws IOException {
-        String indexName = request.param("index");
+        String indexName = request.param(INDEX_PARAM);
+        String fieldName = request.param(FIELD_PARAM);
+
         if (Strings.isNullOrEmpty(indexName)) {
             throw new IllegalArgumentException("Index name is required");
         }
 
-        log.info("Received stats request for index: {}", indexName);
+        log.info("Received stats request for index: {}, field: {}", indexName, fieldName);
 
         return channel -> client.admin()
             .indices()
@@ -100,7 +104,7 @@ public class RestKNNSamplingStatsHandler extends BaseRestHandler {
             .execute(new ActionListener<>() {
                 @Override
                 public void onResponse(IndicesStatsResponse response) {
-                    onStatsResponse(response, indexName, channel);
+                    onStatsResponse(response, indexName, fieldName, channel);
                 }
 
                 @Override
@@ -116,7 +120,7 @@ public class RestKNNSamplingStatsHandler extends BaseRestHandler {
      * @param indexName The name of the index
      * @param channel The REST channel to send the response
      */
-    private void onStatsResponse(IndicesStatsResponse response, String indexName, RestChannel channel) {
+    private void onStatsResponse(IndicesStatsResponse response, String indexName, String fieldName, RestChannel channel) {
         try {
             log.info("Received stats response for index: {}", indexName);
             XContentBuilder builder = channel.newBuilder();
@@ -125,7 +129,7 @@ public class RestKNNSamplingStatsHandler extends BaseRestHandler {
             IndexStats indexStats = response.getIndex(indexName);
             if (indexStats != null) {
                 log.info("Processing index stats for: {}", indexName);
-                SegmentProfilerState.getIndexStats(indexStats, builder, environment);
+                SegmentProfilerState.getIndexStats(indexStats, builder, environment, fieldName);
             } else {
                 log.warn("No stats found for index: {}", indexName);
                 builder.field("error", "No stats found for index: " + indexName);
