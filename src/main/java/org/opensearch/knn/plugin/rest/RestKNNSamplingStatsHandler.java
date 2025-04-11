@@ -5,6 +5,7 @@
 
 package org.opensearch.knn.plugin.rest;
 
+import lombok.AllArgsConstructor;
 import lombok.extern.log4j.Log4j2;
 import org.opensearch.action.admin.indices.stats.IndexStats;
 import org.opensearch.action.admin.indices.stats.IndicesStatsResponse;
@@ -30,34 +31,24 @@ import java.util.List;
 import static org.opensearch.rest.RestRequest.Method.GET;
 
 @Log4j2
+@AllArgsConstructor
 /**
  * Rest handler for sampling stats endpoint
  */
 public class RestKNNSamplingStatsHandler extends BaseRestHandler {
-    // private final IndicesService indicesService;
+    // Constants for request parameters
+    private static final String PARAM_INDEX = "index";
+    private static final String PARAM_FIELD = "field";
+
+    // Error messages
+    private static final String ERROR_INDEX_REQUIRED = "Index name is required";
+    private static final String ERROR_NO_STATS = "No stats found for index: ";
+    private static final String ERROR_STATS_PROCESSING = "Failed to get stats: ";
+
+    // Service dependencies
     private final ClusterService clusterService;
     private final IndexNameExpressionResolver indexNameExpressionResolver;
     private final Environment environment;
-
-    /**
-     * Constructor for the REST handler
-     * @param settings OpenSearch settings
-     * @param clusterService Service for cluster operations
-     * @param indexNameExpressionResolver Resolver for index names
-     * @param environment OpenSearch environment configuration
-     */
-    public RestKNNSamplingStatsHandler(
-        Settings settings,
-        ClusterService clusterService,
-        IndexNameExpressionResolver indexNameExpressionResolver,
-        Environment environment
-        // IndicesService indicesService
-    ) {
-        // this.indicesService = indicesService;
-        this.clusterService = clusterService;
-        this.indexNameExpressionResolver = indexNameExpressionResolver;
-        this.environment = environment;
-    }
 
     /**
      * @return The name of this handler for internal reference
@@ -73,7 +64,9 @@ public class RestKNNSamplingStatsHandler extends BaseRestHandler {
      */
     @Override
     public List<Route> routes() {
-        return List.of(new Route(GET, KNNPlugin.KNN_BASE_URI + "/sampling/{index}/stats"));
+        return List.of(
+                new Route(GET, KNNPlugin.KNN_BASE_URI + "/sampling/{" + PARAM_INDEX + "}/stats")
+        );
     }
 
     /**
@@ -84,41 +77,50 @@ public class RestKNNSamplingStatsHandler extends BaseRestHandler {
      */
     @Override
     protected RestChannelConsumer prepareRequest(RestRequest request, NodeClient client) throws IOException {
-        String indexName = request.param("index");
+        final String indexName = request.param(PARAM_INDEX);
         if (Strings.isNullOrEmpty(indexName)) {
-            throw new IllegalArgumentException("Index name is required");
+            throw new IllegalArgumentException(ERROR_INDEX_REQUIRED);
         }
 
-        log.info("Received stats request for index: {}", indexName);
+        // Optional field parameter to filter by specific vector field
+        final String fieldName = request.param(PARAM_FIELD);
+
+        log.info("Received stats request for index: {}, field: {}", indexName, fieldName);
 
         return channel -> client.admin()
-            .indices()
-            .prepareStats(indexName)
-            .clear()
-            .setDocs(true)
-            .setStore(true)
-            .execute(new ActionListener<>() {
-                @Override
-                public void onResponse(IndicesStatsResponse response) {
-                    onStatsResponse(response, indexName, channel);
-                }
+                .indices()
+                .prepareStats(indexName)
+                .clear()
+                .setDocs(true)
+                .setStore(true)
+                .execute(new ActionListener<>() {
+                    @Override
+                    public void onResponse(IndicesStatsResponse response) {
+                        onStatsResponse(response, indexName, fieldName, channel);
+                    }
 
-                @Override
-                public void onFailure(Exception e) {
-                    onStatsFailure(e, channel);
-                }
-            });
+                    @Override
+                    public void onFailure(Exception e) {
+                        onStatsFailure(e, channel);
+                    }
+                });
     }
 
     /**
      * Processes the stats response
      * @param response The stats response
      * @param indexName The name of the index
+     * @param fieldName Optional field name to filter by
      * @param channel The REST channel to send the response
      */
-    private void onStatsResponse(IndicesStatsResponse response, String indexName, RestChannel channel) {
+    private void onStatsResponse(
+            IndicesStatsResponse response,
+            String indexName,
+            String fieldName,
+            RestChannel channel
+    ) {
         try {
-            log.info("Received stats response for index: {}", indexName);
+            log.info("Received stats response for index: {}, field: {}", indexName, fieldName);
             XContentBuilder builder = channel.newBuilder();
             builder.startObject();
 
@@ -128,7 +130,7 @@ public class RestKNNSamplingStatsHandler extends BaseRestHandler {
                 SegmentProfilerState.getIndexStats(indexStats, builder, environment);
             } else {
                 log.warn("No stats found for index: {}", indexName);
-                builder.field("error", "No stats found for index: " + indexName);
+                builder.field("error", ERROR_NO_STATS + indexName);
             }
 
             builder.endObject();
@@ -149,7 +151,7 @@ public class RestKNNSamplingStatsHandler extends BaseRestHandler {
         try {
             XContentBuilder builder = channel.newBuilder();
             builder.startObject();
-            builder.field("error", "Failed to get stats: " + e.getMessage());
+            builder.field("error", ERROR_STATS_PROCESSING + e.getMessage());
             builder.endObject();
             channel.sendResponse(new BytesRestResponse(RestStatus.INTERNAL_SERVER_ERROR, builder));
         } catch (IOException ex) {

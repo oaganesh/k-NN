@@ -256,7 +256,7 @@ public class KNNPlugin extends Plugin
         );
 
         RestKNNSamplingStatsHandler restKNNSamplingStatsHandler = new RestKNNSamplingStatsHandler(
-            settings,
+           // settings,
             clusterService,
             indexNameExpressionResolver,
             this.environment
