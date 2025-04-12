@@ -173,7 +173,6 @@ public class KNNPlugin extends Plugin
 
     private KNNStats knnStats;
     private ClusterService clusterService;
-    // private IndicesService indicesService;
     private Environment environment;
     private Supplier<RepositoriesService> repositoriesServiceSupplier;
 
@@ -205,7 +204,6 @@ public class KNNPlugin extends Plugin
         Supplier<RepositoriesService> repositoriesServiceSupplier
     ) {
         this.clusterService = clusterService;
-        // this.indicesService = client.getInstanceFromNode(IndicesService.class);
         this.repositoriesServiceSupplier = repositoriesServiceSupplier;
         this.environment = environment;
 
@@ -256,11 +254,9 @@ public class KNNPlugin extends Plugin
         );
 
         RestKNNSamplingStatsHandler restKNNSamplingStatsHandler = new RestKNNSamplingStatsHandler(
-           // settings,
             clusterService,
             indexNameExpressionResolver,
             this.environment
-            // indicesService
         );
         RestGetModelHandler restGetModelHandler = new RestGetModelHandler();
         RestDeleteModelHandler restDeleteModelHandler = new RestDeleteModelHandler();

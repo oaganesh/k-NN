@@ -11,7 +11,6 @@ import org.opensearch.action.admin.indices.stats.IndexStats;
 import org.opensearch.action.admin.indices.stats.IndicesStatsResponse;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
 import org.opensearch.cluster.service.ClusterService;
-import org.opensearch.common.settings.Settings;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.common.Strings;
 import org.opensearch.core.xcontent.XContentBuilder;
@@ -64,9 +63,7 @@ public class RestKNNSamplingStatsHandler extends BaseRestHandler {
      */
     @Override
     public List<Route> routes() {
-        return List.of(
-                new Route(GET, KNNPlugin.KNN_BASE_URI + "/sampling/{" + PARAM_INDEX + "}/stats")
-        );
+        return List.of(new Route(GET, KNNPlugin.KNN_BASE_URI + "/sampling/{" + PARAM_INDEX + "}/stats"));
     }
 
     /**
@@ -81,29 +78,27 @@ public class RestKNNSamplingStatsHandler extends BaseRestHandler {
         if (Strings.isNullOrEmpty(indexName)) {
             throw new IllegalArgumentException(ERROR_INDEX_REQUIRED);
         }
-
-        // Optional field parameter to filter by specific vector field
         final String fieldName = request.param(PARAM_FIELD);
 
         log.info("Received stats request for index: {}, field: {}", indexName, fieldName);
 
         return channel -> client.admin()
-                .indices()
-                .prepareStats(indexName)
-                .clear()
-                .setDocs(true)
-                .setStore(true)
-                .execute(new ActionListener<>() {
-                    @Override
-                    public void onResponse(IndicesStatsResponse response) {
-                        onStatsResponse(response, indexName, fieldName, channel);
-                    }
+            .indices()
+            .prepareStats(indexName)
+            .clear()
+            .setDocs(true)
+            .setStore(true)
+            .execute(new ActionListener<>() {
+                @Override
+                public void onResponse(IndicesStatsResponse response) {
+                    onStatsResponse(response, indexName, fieldName, channel);
+                }
 
-                    @Override
-                    public void onFailure(Exception e) {
-                        onStatsFailure(e, channel);
-                    }
-                });
+                @Override
+                public void onFailure(Exception e) {
+                    onStatsFailure(e, channel);
+                }
+            });
     }
 
     /**
@@ -113,12 +108,7 @@ public class RestKNNSamplingStatsHandler extends BaseRestHandler {
      * @param fieldName Optional field name to filter by
      * @param channel The REST channel to send the response
      */
-    private void onStatsResponse(
-            IndicesStatsResponse response,
-            String indexName,
-            String fieldName,
-            RestChannel channel
-    ) {
+    private void onStatsResponse(IndicesStatsResponse response, String indexName, String fieldName, RestChannel channel) {
         try {
             log.info("Received stats response for index: {}, field: {}", indexName, fieldName);
             XContentBuilder builder = channel.newBuilder();

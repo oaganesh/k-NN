@@ -9,7 +9,6 @@ import com.google.common.annotations.VisibleForTesting;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.extern.log4j.Log4j2;
-import org.apache.commons.math3.stat.descriptive.AggregateSummaryStatistics;
 import org.apache.commons.math3.stat.descriptive.SummaryStatistics;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.IndexReader;
@@ -33,7 +32,13 @@ import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.query.SegmentLevelQuantizationUtil;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.HashSet;
+import java.util.Optional;
+import java.util.ArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
@@ -83,45 +88,34 @@ public class KNNIndexShard {
         return indexShard.shardId().getIndexName();
     }
 
-//    public List<SummaryStatistics> getShardAggregateStatistics(String fieldName) throws IOException {
-//        try (Engine.Searcher searcher = indexShard.acquireSearcher("knn-stats")) {
-//            List<SummaryStatistics> aggregateStats = new ArrayList<>();
-//
-//            // Process each leaf (segment)
-//            for (LeafReaderContext leafContext : searcher.getIndexReader().leaves()) {
-//                List<SummaryStatistics> segmentStats =
-//                        SegmentLevelQuantizationUtil.getAggregateStatistics(
-//                                leafContext.reader(),
-//                                fieldName
-//                        );
-//
-//                // Initialize aggregate stats if needed
-//                if (aggregateStats.isEmpty()) {
-//                    for (int i = 0; i < segmentStats.size(); i++) {
-//                        aggregateStats.add(new SummaryStatistics());
-//                    }
-//                }
-//
-//                // Aggregate statistics from this segment
-//                for (int i = 0; i < segmentStats.size(); i++) {
-//                    SummaryStatistics segmentStat = segmentStats.get(i);
-//                    aggregateStats.get(i).addValue(segmentStat.getMin());
-//                    aggregateStats.get(i).addValue(segmentStat.getMax());
-//
-//                    // Add remaining values using mean
-//                    if (segmentStat.getN() > 2) {
-//                        double remainingMean = (segmentStat.getSum() - segmentStat.getMin() - segmentStat.getMax())
-//                                / (segmentStat.getN() - 2);
-//                        for (int j = 0; j < segmentStat.getN() - 2; j++) {
-//                            aggregateStats.get(i).addValue(remainingMean);
-//                        }
-//                    }
-//                }
-//            }
-//
-//            return aggregateStats;
-//        }
-//    }
+    /**
+     * Gets aggregate statistics for all vector fields in this shard
+     * @return Map of field names to their aggregated statistics
+     */
+    public Map<String, List<SummaryStatistics>> getAggregateStatistics() throws IOException {
+        Map<String, List<SummaryStatistics>> fieldStats = new HashMap<>();
+        try (Engine.Searcher searcher = indexShard.acquireSearcher("knn-get-statistics")) {
+            IndexReader reader = searcher.getIndexReader();
+
+            Set<String> knnFields = new HashSet<>();
+            for (LeafReaderContext leaf : reader.leaves()) {
+                for (FieldInfo fieldInfo : leaf.reader().getFieldInfos()) {
+                    if (fieldInfo.attributes().containsKey(KNNVectorFieldMapper.KNN_FIELD)) {
+                        knnFields.add(fieldInfo.name);
+                    }
+                }
+            }
+
+            for (String fieldName : knnFields) {
+                List<SummaryStatistics> stats = SegmentLevelQuantizationUtil.getAggregateStatistics(reader, fieldName);
+                if (stats != null && !stats.isEmpty()) {
+                    fieldStats.put(fieldName, stats);
+                }
+            }
+        }
+
+        return fieldStats;
+    }
 
     /**
      * Load all of the k-NN segments for this shard into the cache.
@@ -132,12 +126,6 @@ public class KNNIndexShard {
         log.info("[KNN] Warming up index: [{}]", getIndexName());
         final Directory directory = indexShard.store().directory();
         try (Engine.Searcher searcher = indexShard.acquireSearcher("knn-warmup")) {
-            Set<String> knnFields = getKNNFields(searcher.getIndexReader());
-            Map<String, List<AggregateSummaryStatistics>> fieldStats = new HashMap<>();
-
-            for (String fieldName : knnFields) {
-                fieldStats.put(fieldName, getShardAggregateStatistics(fieldName));
-            }
             getAllEngineFileContexts(searcher.getIndexReader()).forEach((engineFileContext) -> {
                 try {
                     final String cacheKey = NativeMemoryCacheKeyHelper.constructCacheKey(
@@ -164,42 +152,10 @@ public class KNNIndexShard {
                     throw new RuntimeException(ex);
                 }
             });
-            logAggregateStatistics(fieldStats);
+            Map<String, List<SummaryStatistics>> aggregateStats = getAggregateStatistics();
+            log.info("[KNN] Collected aggregate statistics for {} fields", aggregateStats.size());
+
         }
-    }
-
-
-    private Set<String> getKNNFields(IndexReader indexReader) throws IOException {
-        Set<String> knnFields = new HashSet<>();
-        for (LeafReaderContext leafContext : indexReader.leaves()) {
-            SegmentReader reader = Lucene.segmentReader(leafContext.reader());
-            for (FieldInfo fieldInfo : reader.getFieldInfos()) {
-                if (fieldInfo.attributes().containsKey(KNNVectorFieldMapper.KNN_FIELD)) {
-                    knnFields.add(fieldInfo.name);
-                }
-            }
-        }
-        return knnFields;
-    }
-
-    /**
-     * Log the aggregated statistics
-     */
-    private void logAggregateStatistics(Map<String, List<AggregateSummaryStatistics>> fieldStats) {
-        fieldStats.forEach((fieldName, stats) -> {
-            log.info("Field: {} aggregated statistics:", fieldName);
-            for (int i = 0; i < stats.size(); i++) {
-                AggregateSummaryStatistics dimStats = stats.get(i);
-                log.info("Dimension {}: count={}, mean={}, std={}, min={}, max={}",
-                        i,
-                        dimStats.getN(),
-                        dimStats.getMean(),
-                        Math.sqrt(dimStats.getVariance()),
-                        dimStats.getMin(),
-                        dimStats.getMax()
-                );
-            }
-        });
     }
 
     /**

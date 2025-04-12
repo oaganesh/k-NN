@@ -7,22 +7,29 @@ package org.opensearch.knn.index.query;
 
 import lombok.experimental.UtilityClass;
 import lombok.extern.log4j.Log4j2;
+import org.apache.commons.math3.stat.descriptive.AggregateSummaryStatistics;
+import org.apache.commons.math3.stat.descriptive.StatisticalSummary;
 import org.apache.commons.math3.stat.descriptive.SummaryStatistics;
+import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.SegmentReader;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.index.SegmentInfo;
+import org.opensearch.common.lucene.Lucene;
 import org.opensearch.knn.index.codec.KNN990Codec.QuantizationConfigKNNCollector;
 import org.opensearch.knn.index.quantizationservice.QuantizationService;
-import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
+import org.opensearch.knn.profiler.SegmentProfilerState;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
 
-
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
-import java.util.function.Supplier;
-
-import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
-import static org.opensearch.knn.profiler.SegmentProfilerState.processVector;
 
 /**
  * A utility class for doing Quantization related operation at a segment level. We can move this utility in {@link SegmentLevelQuantizationInfo}
@@ -69,44 +76,82 @@ public class SegmentLevelQuantizationUtil {
         return tempCollector.getQuantizationState();
     }
 
-//    /**
-//     * Gets aggregate statistics for vectors in a leaf reader
-//     * @param leafReader LeafReader to read vectors from
-//     * @param fieldName Field name to get statistics for
-//     * @return List of SummaryStatistics for each dimension
-//     */
-//    public static List<SummaryStatistics> getAggregateStatistics(final LeafReader leafReader, String fieldName) throws IOException {
-//        final QuantizationConfigKNNCollector tempCollector = new QuantizationConfigKNNCollector();
-//        leafReader.searchNearestVectors(fieldName, new float[0], tempCollector, null);
-//
-//        List<SummaryStatistics> statistics = new ArrayList<>();
-//        QuantizationState quantState = tempCollector.getQuantizationState();
-//
-//        if (quantState == null) {
-//            throw new IllegalStateException(String.format(Locale.ROOT, "No quantization state found for field %s", fieldName));
-//        }
-//
-//        // Initialize statistics based on dimensions from quantization state
-//        int dimensions = quantState.getDimensions();
-//        for (int i = 0; i < dimensions; i++) {
-//            statistics.add(new SummaryStatistics());
-//        }
-//
-//        // Get vectors using the same collector type
-//        QuantizationConfigKNNCollector vectorCollector = new QuantizationConfigKNNCollector();
-//        leafReader.searchNearestVectors(fieldName, new float[dimensions], vectorCollector, null);
-//
-//        // Get KNNVectorValues from the collector's state
-//        KNNVectorValues<?> vectorValues = vectorCollector.getQuantizationState().getVectorValues();
-//        if (vectorValues != null) {
-//            // Process each vector
-//            while (vectorValues.nextDoc() != NO_MORE_DOCS) {
-//                Object vector = vectorValues.getVector();
-//                processVector(vector, statistics);
-//            }
-//        }
-//
-//        return statistics;
-//    }
+    /**
+     * Gets aggregate statistics for a field across segments
+     * @param indexReader The index reader containing all segments
+     * @param fieldName Name of the field to get statistics for
+     * @return Aggregated statistics for the field
+     */
+    public static List<SummaryStatistics> getAggregateStatistics(IndexReader indexReader, String fieldName) throws IOException {
+        List<SummaryStatistics> allStats = new ArrayList<>();
 
+        for (LeafReaderContext leafContext : indexReader.leaves()) {
+            SegmentReader segmentReader = Lucene.segmentReader(leafContext.reader());
+
+            List<SummaryStatistics> segmentStats = collectStatisticsForSegment(segmentReader, fieldName);
+            if (segmentStats != null && !segmentStats.isEmpty()) {
+                allStats.addAll(segmentStats);
+            }
+        }
+        return aggregateStatistics(allStats);
+    }
+
+    /**
+     * Helper method to collect statistics for a segment
+     */
+    private static List<SummaryStatistics> collectStatisticsForSegment(SegmentReader reader, String fieldName) throws IOException {
+
+        SegmentInfo segmentInfo = reader.getSegmentInfo().info;
+        String segmentName = segmentInfo.name;
+
+        Directory dir = reader.directory();
+        String[] files = dir.listAll();
+
+        for (String file : files) {
+            if (file.startsWith(segmentName) && file.endsWith(SegmentProfilerState.VECTOR_STATS_EXTENSION)) {
+                Directory underlyingDir = SegmentProfilerState.getUnderlyingDirectory(dir);
+                if (underlyingDir instanceof FSDirectory) {
+                    Path dirPath = ((FSDirectory) underlyingDir).getDirectory();
+                    Path statsPath = dirPath.resolve(file);
+                    return SegmentProfilerState.readStatsFromFile(statsPath);
+                }
+            }
+        }
+
+        return new ArrayList<>();
+    }
+
+    public static List<SummaryStatistics> aggregateStatistics(List<SummaryStatistics> statistics) {
+        if (statistics == null || statistics.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        List<SummaryStatistics> result = new ArrayList<>(statistics.size());
+
+        for (int i = 0; i < statistics.size(); i++) {
+            Collection<StatisticalSummary> statCollection = Collections.singletonList(statistics.get(i));
+            AggregateSummaryStatistics aggregator = new AggregateSummaryStatistics();
+            aggregator.aggregate(statCollection);
+
+            StatisticalSummary summary = aggregator.getSummary();
+            SummaryStatistics aggregatedStats = new SummaryStatistics();
+
+            if (summary.getN() > 0) {
+                aggregatedStats.addValue(summary.getMin());
+                if (summary.getN() > 1) {
+                    aggregatedStats.addValue(summary.getMax());
+                }
+                if (summary.getN() > 2) {
+                    double remainingMean = (summary.getSum() - summary.getMin() - summary.getMax()) / (summary.getN() - 2);
+                    for (long j = 0; j < summary.getN() - 2; j++) {
+                        aggregatedStats.addValue(remainingMean);
+                    }
+                }
+            }
+
+            result.add(aggregatedStats);
+        }
+
+        return result;
+    }
 }
