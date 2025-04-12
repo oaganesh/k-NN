@@ -97,7 +97,11 @@ public class SegmentLevelQuantizationUtil {
     }
 
     /**
-     * Helper method to collect statistics for a segment
+     *  Helper method to collect statistics for a segment
+     * @param reader
+     * @param fieldName
+     * @return
+     * @throws IOException
      */
     private static List<SummaryStatistics> collectStatisticsForSegment(SegmentReader reader, String fieldName) throws IOException {
 
@@ -121,6 +125,11 @@ public class SegmentLevelQuantizationUtil {
         return new ArrayList<>();
     }
 
+    /**
+     * Aggregates a list of summary statistics
+     * @param statistics List of summary statistics
+     * @return Aggregated summary statistics
+     */
     public static List<SummaryStatistics> aggregateStatistics(List<SummaryStatistics> statistics) {
         if (statistics == null || statistics.isEmpty()) {
             return new ArrayList<>();

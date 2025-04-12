@@ -77,35 +77,35 @@ public class SegmentProfilerStateTests extends OpenSearchTestCase {
         Path tempDir = createTempDir();
         try (FSDirectory directory = FSDirectory.open(tempDir)) {
             SegmentInfo segmentInfo = new SegmentInfo(
-                    directory,
-                    Version.LATEST,
-                    Version.LATEST,
-                    "test_segment",
-                    1,
-                    false,
-                    false,
-                    Mockito.mock(Codec.class),
-                    Map.of(),
-                    new byte[16],
-                    Map.of(),
-                    Sort.RELEVANCE
+                directory,
+                Version.LATEST,
+                Version.LATEST,
+                "test_segment",
+                1,
+                false,
+                false,
+                Mockito.mock(Codec.class),
+                Map.of(),
+                new byte[16],
+                Map.of(),
+                Sort.RELEVANCE
             );
 
             SegmentWriteState state = new SegmentWriteState(
-                    null,
-                    directory,
-                    segmentInfo,
-                    new FieldInfos(new FieldInfo[0]),
-                    null,
-                    IOContext.DEFAULT
+                null,
+                directory,
+                segmentInfo,
+                new FieldInfos(new FieldInfo[0]),
+                null,
+                IOContext.DEFAULT
             );
 
             SegmentProfilerState profilerState = SegmentProfilerState.profileVectors(supplier, state, "test_field");
 
             String statsFileName = IndexFileNames.segmentFileName(
-                    "test_segment",
-                    state.segmentSuffix,
-                    SegmentProfilerState.VECTOR_STATS_EXTENSION
+                "test_segment",
+                state.segmentSuffix,
+                SegmentProfilerState.VECTOR_STATS_EXTENSION
             );
 
             assertTrue("Stats file should exist", Files.exists(tempDir.resolve(statsFileName)));

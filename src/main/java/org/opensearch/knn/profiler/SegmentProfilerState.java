@@ -377,6 +377,10 @@ public class SegmentProfilerState {
 
     /**
      * Collects and aggregates statistics for all fields across all shards
+     * @param indexStats
+     * @param environment
+     * @return
+     * @throws IOException
      */
     private static Map<String, List<SummaryStatistics>> getFieldStatistics(IndexStats indexStats, Environment environment)
         throws IOException {
@@ -401,6 +405,9 @@ public class SegmentProfilerState {
 
     /**
      * Process statistics files in a shard directory and aggregate them
+     * @param indexPath
+     * @param fieldStats
+     * @throws IOException
      */
     private static void processShardStatistics(Path indexPath, Map<String, List<SummaryStatistics>> fieldStats) throws IOException {
 
@@ -442,6 +449,9 @@ public class SegmentProfilerState {
 
     /**
      * Reads just the field name from a statistics file
+     * @param path
+     * @return
+     * @throws IOException
      */
     private static String readFieldNameFromStatsFile(Path path) throws IOException {
         Directory directory = FSDirectory.open(path.getParent());
@@ -466,6 +476,8 @@ public class SegmentProfilerState {
 
     /**
      * Initialize statistics objects for each dimension
+     * @param dimensionCount
+     * @return
      */
     private static List<SummaryStatistics> initializeDimensionStats(int dimensionCount) {
         List<SummaryStatistics> stats = new ArrayList<>(dimensionCount);

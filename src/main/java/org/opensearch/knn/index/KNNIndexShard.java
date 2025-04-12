@@ -118,7 +118,7 @@ public class KNNIndexShard {
     }
 
     /**
-     * Load all of the k-NN segments for this shard into the cache.
+     * Load all the k-NN segments for this shard into the cache.
      *
      * @throws IOException Thrown when getting the HNSW Paths to be loaded in
      */
