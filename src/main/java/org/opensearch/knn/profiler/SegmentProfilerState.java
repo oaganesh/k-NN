@@ -23,11 +23,19 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
  * This class calculates statistical measurements for each dimension of the vectors in a segment.
  */
 @Log4j2
+public class SegmentProfilerState {
 
     // Stores statistical summaries for each dimension of the vectors
     @Getter
     private final List<SummaryStatistics> statistics;
 
+    /**
+     * Constructor to initialize the SegmentProfilerState
+     * @param statistics
+     */
+    public SegmentProfilerState(final List<SummaryStatistics> statistics) {
+        this.statistics = statistics;
+    }
 
     /**
      * Profiles vectors in a segment by analyzing their statistical values
@@ -40,6 +48,7 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
 
         if (vectorValues == null) {
             log.info("No vector values available");
+            return new SegmentProfilerState(new ArrayList<>());
         }
 
         // Initialize vector values
@@ -49,6 +58,7 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
         // Return empty state if no documents are present
         if (vectorValues.docId() == NO_MORE_DOCS) {
             log.info("No vectors to profile");
+            return new SegmentProfilerState(statistics);
         }
 
         int dimension = vectorValues.dimension();
@@ -69,6 +79,7 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
         log.info("Vector profiling completed - processed {} vectors", vectorCount);
         logDimensionStatistics(statistics, dimension);
 
+        return new SegmentProfilerState(statistics);
     }
 
     /**
