@@ -29,6 +29,7 @@ import org.opensearch.knn.index.codec.nativeindex.NativeIndexWriter;
 import org.opensearch.knn.index.quantizationservice.QuantizationService;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
 import org.opensearch.knn.plugin.stats.KNNGraphValue;
+import org.opensearch.knn.profiler.SegmentProfilerState;
 import org.opensearch.knn.quantization.models.quantizationParams.QuantizationParams;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
 
@@ -107,9 +108,10 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                 field.getVectors()
             );
             final QuantizationState quantizationState = train(field.getFieldInfo(), knnVectorValuesSupplier, totalLiveDocs);
+            SegmentProfilerState.profileVectors(knnVectorValuesSupplier);
             // should skip graph building only for non quantization use case and if threshold is met
             if (quantizationState == null && shouldSkipBuildingVectorDataStructure(totalLiveDocs)) {
-                log.debug(
+                log.info(
                     "Skip building vector data structure for field: {}, as liveDoc: {} is less than the threshold {} during flush",
                     fieldInfo.name,
                     totalLiveDocs,
@@ -152,7 +154,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         final QuantizationState quantizationState = train(fieldInfo, knnVectorValuesSupplier, totalLiveDocs);
         // should skip graph building only for non quantization use case and if threshold is met
         if (quantizationState == null && shouldSkipBuildingVectorDataStructure(totalLiveDocs)) {
-            log.debug(
+            log.info(
                 "Skip building vector data structure for field: {}, as liveDoc: {} is less than the threshold {} during merge",
                 fieldInfo.name,
                 totalLiveDocs,
