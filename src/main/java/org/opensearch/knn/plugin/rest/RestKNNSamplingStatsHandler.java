@@ -7,8 +7,10 @@ package org.opensearch.knn.plugin.rest;
 
 import lombok.AllArgsConstructor;
 import lombok.extern.log4j.Log4j2;
+import org.apache.commons.math3.stat.descriptive.SummaryStatistics;
 import org.opensearch.action.admin.indices.stats.IndexStats;
 import org.opensearch.action.admin.indices.stats.IndicesStatsResponse;
+import org.opensearch.action.admin.indices.stats.ShardStats;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.core.action.ActionListener;
@@ -16,6 +18,9 @@ import org.opensearch.core.common.Strings;
 import org.opensearch.core.xcontent.XContentBuilder;
 import org.opensearch.core.rest.RestStatus;
 import org.opensearch.env.Environment;
+import org.opensearch.index.shard.IndexShard;
+import org.opensearch.indices.IndicesService;
+import org.opensearch.knn.index.KNNIndexShard;
 import org.opensearch.knn.plugin.KNNPlugin;
 import org.opensearch.knn.profiler.SegmentProfilerState;
 import org.opensearch.rest.BaseRestHandler;
@@ -26,6 +31,7 @@ import org.opensearch.transport.client.node.NodeClient;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 
 import static org.opensearch.rest.RestRequest.Method.GET;
 
@@ -43,11 +49,24 @@ public class RestKNNSamplingStatsHandler extends BaseRestHandler {
     private static final String ERROR_INDEX_REQUIRED = "Index name is required";
     private static final String ERROR_NO_STATS = "No stats found for index: ";
     private static final String ERROR_STATS_PROCESSING = "Failed to get stats: ";
+    private static final String FIELD_INDEX_SUMMARY = "index_summary";
+    private static final String FIELD_VECTOR_STATS = "vector_stats";
+    private static final String FIELD_FIELD_STATS = "field_stats";
+    private static final String FIELD_DIMENSIONS = "dimensions";
+    private static final String FIELD_DIMENSION = "dimension";
+    private static final String FIELD_COUNT = "count";
+    private static final String FIELD_MIN = "min";
+    private static final String FIELD_MAX = "max";
+    private static final String FIELD_MEAN = "mean";
+    private static final String FIELD_STD_DEV = "std_dev";
+    private static final String FIELD_VARIANCE = "variance";
 
     // Service dependencies
     private final ClusterService clusterService;
     private final IndexNameExpressionResolver indexNameExpressionResolver;
     private final Environment environment;
+    //private final IndicesService indicesService;  // Add this field
+
 
     /**
      * @return The name of this handler for internal reference
@@ -110,14 +129,13 @@ public class RestKNNSamplingStatsHandler extends BaseRestHandler {
      */
     private void onStatsResponse(IndicesStatsResponse response, String indexName, String fieldName, RestChannel channel) {
         try {
-            log.info("Received stats response for index: {}, field: {}", indexName, fieldName);
+            log.info("Processing stats response for index: {}, field: {}", indexName, fieldName);
             XContentBuilder builder = channel.newBuilder();
             builder.startObject();
 
             IndexStats indexStats = response.getIndex(indexName);
             if (indexStats != null) {
-                log.info("Processing index stats for: {}", indexName);
-                SegmentProfilerState.getIndexStats(indexStats, builder, environment);
+                buildStatsResponse(indexStats, fieldName, builder);
             } else {
                 log.warn("No stats found for index: {}", indexName);
                 builder.field("error", ERROR_NO_STATS + indexName);
@@ -130,6 +148,76 @@ public class RestKNNSamplingStatsHandler extends BaseRestHandler {
             onStatsFailure(e, channel);
         }
     }
+
+    /**
+     * Builds the statistics response using the new profiler state
+     */
+    private void buildStatsResponse(IndexStats indexStats, String fieldName, XContentBuilder builder) throws IOException {
+        // Build index summary section
+        builder.startObject(FIELD_INDEX_SUMMARY);
+        builder.field("doc_count", indexStats.getTotal().getDocs().getCount());
+        builder.field("size_in_bytes", indexStats.getTotal().getStore().getSizeInBytes());
+        builder.endObject();
+
+        // Start vector stats section
+        builder.startObject(FIELD_VECTOR_STATS);
+
+        // Get stats for each shard
+        for (ShardStats shard : indexStats.getShards()) {
+            try {
+                IndexShard indexShard = indicesService.indexServiceSafe(shard.getShardRouting().shardId().getIndex())
+                        .getShard(shard.getShardRouting().shardId().id());
+
+                KNNIndexShard knnIndexShard = new KNNIndexShard(indexShard);
+
+                // Get aggregate statistics for the shard
+                Map<String, List<SummaryStatistics>> fieldStatistics = knnIndexShard.getAggregateStatistics();
+
+                // If a specific field was requested, filter the results
+                if (!Strings.isNullOrEmpty(fieldName)) {
+                    if (fieldStatistics.containsKey(fieldName)) {
+                        buildFieldStats(builder, fieldName, fieldStatistics.get(fieldName));
+                    }
+                } else {
+                    // Build stats for all fields
+                    builder.startObject(FIELD_FIELD_STATS);
+                    for (Map.Entry<String, List<SummaryStatistics>> entry : fieldStatistics.entrySet()) {
+                        buildFieldStats(builder, entry.getKey(), entry.getValue());
+                    }
+                    builder.endObject();
+                }
+            } catch (Exception e) {
+                log.error("Error processing shard stats", e);
+            }
+        }
+
+        builder.endObject(); // end vector_stats
+    }
+
+    /**
+     * Builds statistics for a specific field
+     */
+    private void buildFieldStats(XContentBuilder builder, String fieldName, List<SummaryStatistics> stats) throws IOException {
+        builder.startObject(fieldName);
+        builder.startArray(FIELD_DIMENSIONS);
+
+        for (int i = 0; i < stats.size(); i++) {
+            SummaryStatistics stat = stats.get(i);
+            builder.startObject()
+                    .field(FIELD_DIMENSION, i)
+                    .field(FIELD_COUNT, stat.getN())
+                    .field(FIELD_MIN, SegmentProfilerState.formatDouble(stat.getMin()))
+                    .field(FIELD_MAX, SegmentProfilerState.formatDouble(stat.getMax()))
+                    .field(FIELD_MEAN, SegmentProfilerState.formatDouble(stat.getMean()))
+                    .field(FIELD_STD_DEV, SegmentProfilerState.formatDouble(stat.getStandardDeviation()))
+                    .field(FIELD_VARIANCE, SegmentProfilerState.formatDouble(stat.getVariance()))
+                    .endObject();
+        }
+
+        builder.endArray();
+        builder.endObject();
+    }
+
 
     /**
      * Handles failures in processing the stats response

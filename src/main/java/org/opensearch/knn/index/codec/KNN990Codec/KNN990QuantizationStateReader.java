@@ -7,6 +7,7 @@ package org.opensearch.knn.index.codec.KNN990Codec;
 
 import com.google.common.annotations.VisibleForTesting;
 import lombok.extern.log4j.Log4j2;
+import org.apache.commons.math3.stat.descriptive.SummaryStatistics;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.SegmentReadState;
@@ -19,8 +20,10 @@ import org.opensearch.knn.quantization.models.quantizationState.MultiBitScalarQu
 import org.opensearch.knn.quantization.models.quantizationState.OneBitScalarQuantizationState;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationStateReadConfig;
+import org.opensearch.knn.profiler.SegmentProfilerState;
 
 import java.io.IOException;
+import java.util.List;
 
 /**
  * Reads quantization states
@@ -115,5 +118,51 @@ public final class KNN990QuantizationStateReader {
     @VisibleForTesting
     static String getQuantizationStateFileName(SegmentReadState state) {
         return IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, KNNConstants.QUANTIZATION_STATE_FILE_SUFFIX);
+    }
+
+    public static List<SummaryStatistics> readProfilerState(QuantizationStateReadConfig readConfig) throws IOException {
+        SegmentReadState segmentReadState = readConfig.getSegmentReadState();
+        String field = readConfig.getField();
+        String quantizationStateFileName = getQuantizationStateFileName(segmentReadState);
+        int fieldNumber = segmentReadState.fieldInfos.fieldInfo(field).getFieldNumber();
+
+        try (IndexInput input = segmentReadState.directory.openInput(quantizationStateFileName, IOContext.DEFAULT)) {
+            CodecUtil.retrieveChecksum(input);
+            int numFields = getNumFields(input);
+
+            // Skip quantization states section
+            skipQuantizationStates(input, numFields);
+
+            // Read profiler states section
+            int numProfilerFields = input.readInt();
+            long position = -1;
+            int length = 0;
+
+            for (int i = 0; i < numProfilerFields; i++) {
+                int tempFieldNumber = input.readInt();
+                int tempLength = input.readInt();
+                long tempPosition = input.readVLong();
+                if (tempFieldNumber == fieldNumber) {
+                    position = tempPosition;
+                    length = tempLength;
+                    break;
+                }
+            }
+
+            if (position == -1 || length == 0) {
+                throw new IllegalArgumentException(String.format("Profiler state for field %s not found", field));
+            }
+
+            byte[] stateBytes = readStateBytes(input, position, length);
+            return SegmentProfilerState.fromByteArray(stateBytes).getStatistics();
+        }
+    }
+
+    private static void skipQuantizationStates(IndexInput input, int numFields) throws IOException {
+        for (int i = 0; i < numFields; i++) {
+            input.readInt(); // field number
+            input.readInt(); // length
+            input.readVLong(); // position
+        }
     }
 }

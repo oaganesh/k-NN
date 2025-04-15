@@ -108,6 +108,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                 field.getVectors()
             );
             final QuantizationState quantizationState = train(field.getFieldInfo(), knnVectorValuesSupplier, totalLiveDocs);
+            final SegmentProfilerState profilerState = profileVectors(field.getFieldInfo(), knnVectorValuesSupplier, totalLiveDocs);
             SegmentProfilerState.profileVectors(knnVectorValuesSupplier, segmentWriteState, fieldInfo.getName());
 
             // should skip graph building only for non quantization use case and if threshold is met
@@ -152,6 +153,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
             return;
         }
         final QuantizationState quantizationState = train(fieldInfo, knnVectorValuesSupplier, totalLiveDocs);
+        final SegmentProfilerState profilerState = profileVectors(fieldInfo, knnVectorValuesSupplier, totalLiveDocs);
         // SegmentProfilerState.profileVectors(knnVectorValuesSupplier, segmentWriteState, fieldInfo.getName());
 
         // should skip graph building only for non quantization use case and if threshold is met
@@ -243,6 +245,24 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         }
 
         return quantizationState;
+    }
+
+    private SegmentProfilerState profileVectors(
+            final FieldInfo fieldInfo,
+            final Supplier<KNNVectorValues<?>> knnVectorValuesSupplier,
+            final int totalLiveDocs
+    ) throws IOException {
+        if (totalLiveDocs > 0) {
+            initQuantizationStateWriterIfNecessary();
+            SegmentProfilerState profilerState = SegmentProfilerState.profileVectors(
+                    knnVectorValuesSupplier,
+                    segmentWriteState,
+                    fieldInfo.name
+            );
+            quantizationStateWriter.writeProfilerState(fieldInfo.getFieldNumber(), profilerState);
+            return profilerState;
+        }
+        return null;
     }
 
     /**

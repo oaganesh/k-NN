@@ -82,19 +82,19 @@ public class SegmentLevelQuantizationUtil {
      * @param fieldName Name of the field to get statistics for
      * @return Aggregated statistics for the field
      */
-    public static List<SummaryStatistics> getAggregateStatistics(IndexReader indexReader, String fieldName) throws IOException {
-        List<SummaryStatistics> allStats = new ArrayList<>();
-
-        for (LeafReaderContext leafContext : indexReader.leaves()) {
-            SegmentReader segmentReader = Lucene.segmentReader(leafContext.reader());
-
-            List<SummaryStatistics> segmentStats = collectStatisticsForSegment(segmentReader, fieldName);
-            if (segmentStats != null && !segmentStats.isEmpty()) {
-                allStats.addAll(segmentStats);
-            }
-        }
-        return aggregateStatistics(allStats);
-    }
+//    public static List<SummaryStatistics> getAggregateStatistics(IndexReader indexReader, String fieldName) throws IOException {
+//        List<SummaryStatistics> allStats = new ArrayList<>();
+//
+//        for (LeafReaderContext leafContext : indexReader.leaves()) {
+//            SegmentReader segmentReader = Lucene.segmentReader(leafContext.reader());
+//
+//            List<SummaryStatistics> segmentStats = collectStatisticsForSegment(segmentReader, fieldName);
+//            if (segmentStats != null && !segmentStats.isEmpty()) {
+//                allStats.addAll(segmentStats);
+//            }
+//        }
+//        return aggregateStatistics(allStats);
+//    }
 
     /**
      *  Helper method to collect statistics for a segment
@@ -103,27 +103,27 @@ public class SegmentLevelQuantizationUtil {
      * @return
      * @throws IOException
      */
-    private static List<SummaryStatistics> collectStatisticsForSegment(SegmentReader reader, String fieldName) throws IOException {
-
-        SegmentInfo segmentInfo = reader.getSegmentInfo().info;
-        String segmentName = segmentInfo.name;
-
-        Directory dir = reader.directory();
-        String[] files = dir.listAll();
-
-        for (String file : files) {
-            if (file.startsWith(segmentName) && file.endsWith(SegmentProfilerState.VECTOR_STATS_EXTENSION)) {
-                Directory underlyingDir = SegmentProfilerState.getUnderlyingDirectory(dir);
-                if (underlyingDir instanceof FSDirectory) {
-                    Path dirPath = ((FSDirectory) underlyingDir).getDirectory();
-                    Path statsPath = dirPath.resolve(file);
-                    return SegmentProfilerState.readStatsFromFile(statsPath);
-                }
-            }
-        }
-
-        return new ArrayList<>();
-    }
+//    private static List<SummaryStatistics> collectStatisticsForSegment(SegmentReader reader, String fieldName) throws IOException {
+//
+//        SegmentInfo segmentInfo = reader.getSegmentInfo().info;
+//        String segmentName = segmentInfo.name;
+//
+//        Directory dir = reader.directory();
+//        String[] files = dir.listAll();
+//
+//        for (String file : files) {
+//            if (file.startsWith(segmentName) && file.endsWith(SegmentProfilerState.VECTOR_STATS_EXTENSION)) {
+//                Directory underlyingDir = SegmentProfilerState.getUnderlyingDirectory(dir);
+//                if (underlyingDir instanceof FSDirectory) {
+//                    Path dirPath = ((FSDirectory) underlyingDir).getDirectory();
+//                    Path statsPath = dirPath.resolve(file);
+//                    return SegmentProfilerState.readStatsFromFile(statsPath);
+//                }
+//            }
+//        }
+//
+//        return new ArrayList<>();
+//    }
 
     /**
      * Aggregates a list of summary statistics

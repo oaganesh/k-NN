@@ -7,13 +7,17 @@ package org.opensearch.knn.index.codec.KNN990Codec;
 
 import lombok.AllArgsConstructor;
 import lombok.Setter;
+import org.apache.commons.math3.stat.descriptive.SummaryStatistics;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.store.IndexOutput;
 import org.opensearch.knn.common.KNNConstants;
+import org.opensearch.knn.profiler.SegmentProfilerState;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
 
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,6 +29,7 @@ public final class KNN990QuantizationStateWriter {
 
     private final IndexOutput output;
     private List<FieldQuantizationState> fieldQuantizationStates = new ArrayList<>();
+    private List<FieldProfilerState> fieldProfilerStates = new ArrayList<>();
     static final String NATIVE_ENGINES_990_KNN_VECTORS_FORMAT_QS_DATA = "NativeEngines990KnnVectorsFormatQSData";
 
     /**
@@ -89,18 +94,18 @@ public final class KNN990QuantizationStateWriter {
      * Writes index footer and other index information for parsing later
      * @throws IOException could be thrown while writing
      */
-    public void writeFooter() throws IOException {
-        long indexStartPosition = output.getFilePointer();
-        output.writeInt(fieldQuantizationStates.size());
-        for (FieldQuantizationState fieldQuantizationState : fieldQuantizationStates) {
-            output.writeInt(fieldQuantizationState.fieldNumber);
-            output.writeInt(fieldQuantizationState.stateBytes.length);
-            output.writeVLong(fieldQuantizationState.position);
-        }
-        output.writeLong(indexStartPosition);
-        output.writeInt(-1);
-        CodecUtil.writeFooter(output);
-    }
+//    public void writeFooter() throws IOException {
+//        long indexStartPosition = output.getFilePointer();
+//        output.writeInt(fieldQuantizationStates.size());
+//        for (FieldQuantizationState fieldQuantizationState : fieldQuantizationStates) {
+//            output.writeInt(fieldQuantizationState.fieldNumber);
+//            output.writeInt(fieldQuantizationState.stateBytes.length);
+//            output.writeVLong(fieldQuantizationState.position);
+//        }
+//        output.writeLong(indexStartPosition);
+//        output.writeInt(-1);
+//        CodecUtil.writeFooter(output);
+//    }
 
     @AllArgsConstructor
     private static class FieldQuantizationState {
@@ -112,5 +117,66 @@ public final class KNN990QuantizationStateWriter {
 
     public void closeOutput() throws IOException {
         output.close();
+    }
+
+    @AllArgsConstructor
+    private static class FieldProfilerState {
+        final int fieldNumber;
+        final byte[] stateBytes;
+        @Setter
+        Long position;
+    }
+
+    public void writeProfilerState(int fieldNumber, SegmentProfilerState profilerState) throws IOException {
+        byte[] stateBytes = serializeProfilerState(profilerState);
+        long position = output.getFilePointer();
+        output.writeBytes(stateBytes, stateBytes.length);
+        fieldProfilerStates.add(new FieldProfilerState(fieldNumber, stateBytes, position));
+    }
+
+    private byte[] serializeProfilerState(SegmentProfilerState profilerState) throws IOException {
+        // Serialize statistics list to bytes
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
+             DataOutputStream dos = new DataOutputStream(baos)) {
+
+            List<SummaryStatistics> stats = profilerState.getStatistics();
+            dos.writeInt(stats.size());
+
+            for (SummaryStatistics stat : stats) {
+                dos.writeLong(stat.getN());
+                dos.writeDouble(stat.getMin());
+                dos.writeDouble(stat.getMax());
+                dos.writeDouble(stat.getSum());
+                dos.writeDouble(stat.getMean());
+                dos.writeDouble(stat.getStandardDeviation());
+                dos.writeDouble(stat.getVariance());
+            }
+
+            return baos.toByteArray();
+        }
+    }
+
+    public void writeFooter() throws IOException {
+        long indexStartPosition = output.getFilePointer();
+
+        // Write quantization states
+        output.writeInt(fieldQuantizationStates.size());
+        for (FieldQuantizationState state : fieldQuantizationStates) {
+            output.writeInt(state.fieldNumber);
+            output.writeInt(state.stateBytes.length);
+            output.writeVLong(state.position);
+        }
+
+        // Write profiler states
+        output.writeInt(fieldProfilerStates.size());
+        for (FieldProfilerState state : fieldProfilerStates) {
+            output.writeInt(state.fieldNumber);
+            output.writeInt(state.stateBytes.length);
+            output.writeVLong(state.position);
+        }
+
+        output.writeLong(indexStartPosition);
+        output.writeInt(-1);
+        CodecUtil.writeFooter(output);
     }
 }

@@ -9,18 +9,16 @@ import com.google.common.annotations.VisibleForTesting;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.extern.log4j.Log4j2;
+import org.apache.commons.math3.stat.descriptive.AggregateSummaryStatistics;
 import org.apache.commons.math3.stat.descriptive.SummaryStatistics;
-import org.apache.lucene.index.FieldInfo;
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.LeafReaderContext;
-import org.apache.lucene.index.SegmentCommitInfo;
-import org.apache.lucene.index.SegmentInfo;
-import org.apache.lucene.index.SegmentReader;
+import org.apache.lucene.index.*;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.IOContext;
 import org.opensearch.common.lucene.Lucene;
 import org.opensearch.index.engine.Engine;
 import org.opensearch.index.shard.IndexShard;
 import org.opensearch.knn.common.FieldInfoExtractor;
+import org.opensearch.knn.index.codec.KNN990Codec.KNN990QuantizationStateReader;
 import org.opensearch.knn.index.codec.util.NativeMemoryCacheKeyHelper;
 import org.opensearch.knn.index.engine.qframe.QuantizationConfig;
 import org.opensearch.knn.index.mapper.KNNVectorFieldMapper;
@@ -30,15 +28,10 @@ import org.opensearch.knn.index.memory.NativeMemoryEntryContext;
 import org.opensearch.knn.index.memory.NativeMemoryLoadStrategy;
 import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.query.SegmentLevelQuantizationUtil;
+import org.opensearch.knn.quantization.models.quantizationState.QuantizationStateReadConfig;
 
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.HashSet;
-import java.util.Optional;
-import java.util.ArrayList;
+import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
@@ -92,6 +85,31 @@ public class KNNIndexShard {
      * Gets aggregate statistics for all vector fields in this shard
      * @return Map of field names to their aggregated statistics
      */
+//    public Map<String, List<SummaryStatistics>> getAggregateStatistics() throws IOException {
+//        Map<String, List<SummaryStatistics>> fieldStats = new HashMap<>();
+//        try (Engine.Searcher searcher = indexShard.acquireSearcher("knn-get-statistics")) {
+//            IndexReader reader = searcher.getIndexReader();
+//
+//            Set<String> knnFields = new HashSet<>();
+//            for (LeafReaderContext leaf : reader.leaves()) {
+//                for (FieldInfo fieldInfo : leaf.reader().getFieldInfos()) {
+//                    if (fieldInfo.attributes().containsKey(KNNVectorFieldMapper.KNN_FIELD)) {
+//                        knnFields.add(fieldInfo.name);
+//                    }
+//                }
+//            }
+//
+//            for (String fieldName : knnFields) {
+//                List<SummaryStatistics> stats = SegmentLevelQuantizationUtil.getAggregateStatistics(reader, fieldName);
+//                if (stats != null && !stats.isEmpty()) {
+//                    fieldStats.put(fieldName, stats);
+//                }
+//            }
+//        }
+//
+//        return fieldStats;
+//    }
+
     public Map<String, List<SummaryStatistics>> getAggregateStatistics() throws IOException {
         Map<String, List<SummaryStatistics>> fieldStats = new HashMap<>();
         try (Engine.Searcher searcher = indexShard.acquireSearcher("knn-get-statistics")) {
@@ -107,13 +125,12 @@ public class KNNIndexShard {
             }
 
             for (String fieldName : knnFields) {
-                List<SummaryStatistics> stats = SegmentLevelQuantizationUtil.getAggregateStatistics(reader, fieldName);
-                if (stats != null && !stats.isEmpty()) {
-                    fieldStats.put(fieldName, stats);
-                }
+                List<SummaryStatistics> stats = new ArrayList<>();
+                // Here you would implement the logic to get and aggregate statistics for each field
+                // This might involve reading from the quantization state file or other sources
+                fieldStats.put(fieldName, stats);
             }
         }
-
         return fieldStats;
     }
 
@@ -152,9 +169,50 @@ public class KNNIndexShard {
                     throw new RuntimeException(ex);
                 }
             });
+            collectProfilerStats();
             Map<String, List<SummaryStatistics>> aggregateStats = getAggregateStatistics();
             log.info("[KNN] Collected aggregate statistics for {} fields", aggregateStats.size());
 
+        }
+    }
+
+    public void profilerWarmup() throws IOException {
+        try (Engine.Searcher searcher = indexShard.acquireSearcher("knn-profiler-stats")) {
+            for (LeafReaderContext leafContext : searcher.getIndexReader().leaves()) {
+                SegmentReader segmentReader = Lucene.segmentReader(leafContext.reader());
+
+                // Process each field in the segment
+                for (FieldInfo fieldInfo : segmentReader.getFieldInfos()) {
+                    if (fieldInfo.attributes().containsKey(KNNVectorFieldMapper.KNN_FIELD)) {
+                        List<SummaryStatistics> stats = KNN990QuantizationStateReader.readProfilerState(
+                                new QuantizationStateReadConfig(
+                                        new SegmentReadState(
+                                                segmentReader.directory(),
+                                                segmentReader.getSegmentInfo().info,
+                                                segmentReader.getFieldInfos(),
+                                                IOContext.DEFAULT
+                                        ),
+                                        null, // quantization params can be null for profiler state
+                                        fieldInfo.name,
+                                        UUID.randomUUID().toString() // generate a unique cache key
+                                )
+                        );
+
+                        // Aggregate statistics using AggregateSummaryStatistics
+                        List<SummaryStatistics> aggregatedStats = new ArrayList<>();
+                        for (int dim = 0; dim < stats.size(); dim++) {
+                            AggregateSummaryStatistics aggregateStats = new AggregateSummaryStatistics();
+                            Collection<SummaryStatistics> dimensionStats = new ArrayList<>();
+                            dimensionStats.add(stats.get(dim));
+                            aggregateStats.aggregate(dimensionStats);
+                            aggregatedStats.add((SummaryStatistics) aggregateStats.getSummary());
+                        }
+
+                        // Log or store the aggregated statistics
+                        log.info("Aggregated stats for field {}: {}", fieldInfo.name, aggregatedStats);
+                    }
+                }
+            }
         }
     }
 
@@ -261,6 +319,88 @@ public class KNNIndexShard {
             .filter(fileName -> fileName.endsWith(suffix))
             .map(vectorFileName -> new EngineFileContext(spaceType, modelId, vectorFileName, vectorDataType, segmentCommitInfo.info))
             .collect(Collectors.toList());
+    }
+
+    public void collectProfilerStats() throws IOException {
+        log.info("[KNN] Collecting profiler stats for index: [{}]", getIndexName());
+        final Directory directory = indexShard.store().directory();
+
+        try (Engine.Searcher searcher = indexShard.acquireSearcher("knn-profiler-stats")) {
+            for (LeafReaderContext leafContext : searcher.getIndexReader().leaves()) {
+                SegmentReader segmentReader = Lucene.segmentReader(leafContext.reader());
+                FieldInfos fieldInfos = segmentReader.getFieldInfos();
+
+                getAllEngineFileContexts(searcher.getIndexReader()).forEach((engineFileContext) -> {
+                    try {
+                        String cacheKey = NativeMemoryCacheKeyHelper.constructCacheKey(
+                                engineFileContext.vectorFileName,
+                                engineFileContext.segmentInfo
+                        );
+
+                        // Read and process profiler stats
+                        List<SummaryStatistics> stats = readProfilerStats(directory, cacheKey, engineFileContext, fieldInfos);
+                        // Aggregate and log statistics using the extracted field name
+                        String fieldName = getFieldNameFromFileName(engineFileContext.getVectorFileName());
+                        processProfilerStats(stats, fieldName);
+                    } catch (Exception e) {
+                        log.error("Error processing profiler stats", e);
+                    }
+                });
+            }
+        }
+    }
+
+    private List<SummaryStatistics> readProfilerStats(Directory directory, String cacheKey, EngineFileContext context, FieldInfos fieldInfos)
+            throws IOException {
+        // Create read config
+        QuantizationStateReadConfig readConfig = new QuantizationStateReadConfig(
+                new SegmentReadState(
+                        directory,
+                        context.getSegmentInfo(),
+                        fieldInfos,
+                        IOContext.DEFAULT
+                ),
+                null, // No quantization params needed for profiler
+                getFieldNameFromFileName(context.getVectorFileName()),
+                cacheKey
+        );
+
+        try {
+            return KNN990QuantizationStateReader.readProfilerState(readConfig);
+        } catch (IOException e) {
+            log.error("Failed to read profiler stats for file: " + context.getVectorFileName(), e);
+            return Collections.emptyList();
+        }
+    }
+
+    // Helper method to extract field name from file name
+    private String getFieldNameFromFileName(String fileName) {
+        // Example file name format: "0_my_field.faiss"
+        int underscoreIndex = fileName.indexOf('_');
+        int dotIndex = fileName.lastIndexOf('.');
+        if (underscoreIndex >= 0 && dotIndex >= 0) {
+            return fileName.substring(underscoreIndex + 1, dotIndex);
+        }
+        return fileName;
+    }
+
+    private void processProfilerStats(List<SummaryStatistics> stats, String fieldName) {
+        // Aggregate and log statistics
+        log.info("Processed profiler stats for field {}: {}", fieldName, stats);
+    }
+
+    private void validateStats(List<SummaryStatistics> stats, String fieldName) {
+        if (stats == null || stats.isEmpty()) {
+            log.warn("No statistics found for field: {}", fieldName);
+            return;
+        }
+
+        for (int i = 0; i < stats.size(); i++) {
+            SummaryStatistics stat = stats.get(i);
+            if (stat.getN() == 0) {
+                log.warn("No data points found for dimension {} in field {}", i, fieldName);
+            }
+        }
     }
 
     @AllArgsConstructor
