@@ -10,24 +10,14 @@ import lombok.extern.log4j.Log4j2;
 import org.apache.commons.math3.stat.descriptive.AggregateSummaryStatistics;
 import org.apache.commons.math3.stat.descriptive.StatisticalSummary;
 import org.apache.commons.math3.stat.descriptive.SummaryStatistics;
-import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.LeafReader;
-import org.apache.lucene.index.LeafReaderContext;
-import org.apache.lucene.index.SegmentReader;
-import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.FSDirectory;
-import org.apache.lucene.index.SegmentInfo;
-import org.opensearch.common.lucene.Lucene;
 import org.opensearch.knn.index.codec.KNN990Codec.QuantizationConfigKNNCollector;
 import org.opensearch.knn.index.quantizationservice.QuantizationService;
-import org.opensearch.knn.profiler.SegmentProfilerState;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
 
 import java.io.IOException;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 
@@ -76,75 +66,24 @@ public class SegmentLevelQuantizationUtil {
         return tempCollector.getQuantizationState();
     }
 
-    /**
-     * Gets aggregate statistics for a field across segments
-     * @param indexReader The index reader containing all segments
-     * @param fieldName Name of the field to get statistics for
-     * @return Aggregated statistics for the field
-     */
-    public static List<SummaryStatistics> getAggregateStatistics(IndexReader indexReader, String fieldName) throws IOException {
-        List<SummaryStatistics> allStats = new ArrayList<>();
-
-        for (LeafReaderContext leafContext : indexReader.leaves()) {
-            SegmentReader segmentReader = Lucene.segmentReader(leafContext.reader());
-
-            List<SummaryStatistics> segmentStats = collectStatisticsForSegment(segmentReader, fieldName);
-            if (segmentStats != null && !segmentStats.isEmpty()) {
-                allStats.addAll(segmentStats);
-            }
-        }
-        return aggregateStatistics(allStats);
-    }
-
-    /**
-     *  Helper method to collect statistics for a segment
-     * @param reader
-     * @param fieldName
-     * @return
-     * @throws IOException
-     */
-    private static List<SummaryStatistics> collectStatisticsForSegment(SegmentReader reader, String fieldName) throws IOException {
-
-        SegmentInfo segmentInfo = reader.getSegmentInfo().info;
-        String segmentName = segmentInfo.name;
-
-        Directory dir = reader.directory();
-        String[] files = dir.listAll();
-
-        for (String file : files) {
-            if (file.startsWith(segmentName) && file.endsWith(SegmentProfilerState.VECTOR_STATS_EXTENSION)) {
-                Directory underlyingDir = SegmentProfilerState.getUnderlyingDirectory(dir);
-                if (underlyingDir instanceof FSDirectory) {
-                    Path dirPath = ((FSDirectory) underlyingDir).getDirectory();
-                    Path statsPath = dirPath.resolve(file);
-                    return SegmentProfilerState.readStatsFromFile(statsPath);
-                }
-            }
-        }
-
-        return new ArrayList<>();
-    }
-
-    /**
-     * Aggregates a list of summary statistics
-     * @param statistics List of summary statistics
-     * @return Aggregated summary statistics
-     */
-    public static List<SummaryStatistics> aggregateStatistics(List<SummaryStatistics> statistics) {
-        if (statistics == null || statistics.isEmpty()) {
+    public static List<SummaryStatistics> aggregateStatistics(List<List<SummaryStatistics>> segmentStats) {
+        if (segmentStats == null || segmentStats.isEmpty()) {
             return new ArrayList<>();
         }
 
-        List<SummaryStatistics> result = new ArrayList<>(statistics.size());
+        int dimensions = segmentStats.get(0).size();
+        List<SummaryStatistics> result = new ArrayList<>(dimensions);
 
-        for (int i = 0; i < statistics.size(); i++) {
-            Collection<StatisticalSummary> statCollection = Collections.singletonList(statistics.get(i));
+        for (int dim = 0; dim < dimensions; dim++) {
+            Collection<StatisticalSummary> dimStats = new ArrayList<>();
+            for (List<SummaryStatistics> segmentStat : segmentStats) {
+                dimStats.add(segmentStat.get(dim));
+            }
+
             AggregateSummaryStatistics aggregator = new AggregateSummaryStatistics();
-            aggregator.aggregate(statCollection);
+            StatisticalSummary summary = aggregator.aggregate(dimStats);
 
-            StatisticalSummary summary = aggregator.getSummary();
             SummaryStatistics aggregatedStats = new SummaryStatistics();
-
             if (summary.getN() > 0) {
                 aggregatedStats.addValue(summary.getMin());
                 if (summary.getN() > 1) {

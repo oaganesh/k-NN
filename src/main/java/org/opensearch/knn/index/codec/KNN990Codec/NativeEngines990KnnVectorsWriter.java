@@ -12,6 +12,7 @@
 package org.opensearch.knn.index.codec.KNN990Codec;
 
 import lombok.extern.log4j.Log4j2;
+import org.apache.commons.math3.stat.descriptive.SummaryStatistics;
 import org.apache.lucene.codecs.KnnFieldVectorsWriter;
 import org.apache.lucene.codecs.KnnVectorsWriter;
 import org.apache.lucene.codecs.hnsw.FlatVectorsWriter;
@@ -108,7 +109,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                 field.getVectors()
             );
             final QuantizationState quantizationState = train(field.getFieldInfo(), knnVectorValuesSupplier, totalLiveDocs);
-            SegmentProfilerState.profileVectors(knnVectorValuesSupplier, segmentWriteState, fieldInfo.getName());
+            profileVectors(fieldInfo, knnVectorValuesSupplier, totalLiveDocs);
 
             // should skip graph building only for non quantization use case and if threshold is met
             if (quantizationState == null && shouldSkipBuildingVectorDataStructure(totalLiveDocs)) {
@@ -151,8 +152,13 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
             log.debug("[Merge] No live docs for field {}", fieldInfo.getName());
             return;
         }
+        final SegmentProfilerState profilerState = profileVectors(fieldInfo, knnVectorValuesSupplier, totalLiveDocs);
+        if (profilerState != null) {
+            quantizationStateWriter.writeProfilerState(fieldInfo.getFieldNumber(), profilerState);
+        }
+
+        initQuantizationStateWriterIfNecessary();
         final QuantizationState quantizationState = train(fieldInfo, knnVectorValuesSupplier, totalLiveDocs);
-        // SegmentProfilerState.profileVectors(knnVectorValuesSupplier, segmentWriteState, fieldInfo.getName());
 
         // should skip graph building only for non quantization use case and if threshold is met
         if (quantizationState == null && shouldSkipBuildingVectorDataStructure(totalLiveDocs)) {
@@ -231,7 +237,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         final Supplier<KNNVectorValues<?>> knnVectorValuesSupplier,
         final int totalLiveDocs
     ) throws IOException {
-
+        initQuantizationStateWriterIfNecessary();
         final QuantizationService quantizationService = QuantizationService.getInstance();
         final QuantizationParams quantizationParams = quantizationService.getQuantizationParams(fieldInfo);
         QuantizationState quantizationState = null;
@@ -242,6 +248,31 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
             quantizationStateWriter.writeState(fieldInfo.getFieldNumber(), quantizationState);
         }
 
+        if (totalLiveDocs > 0) {
+            KNNVectorValues<?> knnVectorValues = knnVectorValuesSupplier.get();
+            SegmentProfilerState profilerState = SegmentProfilerState.profileVectors(
+                knnVectorValuesSupplier,
+                segmentWriteState,
+                fieldInfo.name
+            );
+
+            quantizationStateWriter.writeProfilerState(fieldInfo.getFieldNumber(), profilerState);
+
+            log.info("[KNN] Field: {} - Profiler Statistics:", fieldInfo.name);
+            List<SummaryStatistics> stats = profilerState.getStatistics();
+            for (int i = 0; i < stats.size(); i++) {
+                SummaryStatistics stat = stats.get(i);
+                log.info(
+                    "Dimension {}: count={}, min={}, max={}, mean={}, stddev={}",
+                    i,
+                    stat.getN(),
+                    SegmentProfilerState.formatDouble(stat.getMin()),
+                    SegmentProfilerState.formatDouble(stat.getMax()),
+                    SegmentProfilerState.formatDouble(stat.getMean()),
+                    SegmentProfilerState.formatDouble(stat.getStandardDeviation())
+                );
+            }
+        }
         return quantizationState;
     }
 
@@ -272,5 +303,26 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
             return true;
         }
         return docCount < approximateThreshold;
+    }
+
+    private SegmentProfilerState profileVectors(
+        final FieldInfo fieldInfo,
+        final Supplier<KNNVectorValues<?>> knnVectorValuesSupplier,
+        final int totalLiveDocs
+    ) throws IOException {
+        if (totalLiveDocs > 0) {
+            initQuantizationStateWriterIfNecessary();
+            KNNVectorValues<?> knnVectorValues = knnVectorValuesSupplier.get();
+            SegmentProfilerState profilerState = SegmentProfilerState.profileVectors(
+                knnVectorValuesSupplier,
+                segmentWriteState,
+                fieldInfo.name
+            );
+
+            quantizationStateWriter.writeProfilerState(fieldInfo.getFieldNumber(), profilerState);
+
+            return profilerState;
+        }
+        return null;
     }
 }

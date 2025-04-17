@@ -7,11 +7,13 @@ package org.opensearch.knn.index.codec.KNN990Codec;
 
 import lombok.AllArgsConstructor;
 import lombok.Setter;
+import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.store.IndexOutput;
 import org.opensearch.knn.common.KNNConstants;
+import org.opensearch.knn.profiler.SegmentProfilerState;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
 
 import java.io.IOException;
@@ -21,10 +23,12 @@ import java.util.List;
 /**
  * Writes quantization states to off heap memory
  */
+@Log4j2
 public final class KNN990QuantizationStateWriter {
 
     private final IndexOutput output;
     private List<FieldQuantizationState> fieldQuantizationStates = new ArrayList<>();
+    private List<FieldProfilerState> fieldProfilerStates = new ArrayList<>();
     static final String NATIVE_ENGINES_990_KNN_VECTORS_FORMAT_QS_DATA = "NativeEngines990KnnVectorsFormatQSData";
 
     /**
@@ -85,25 +89,67 @@ public final class KNN990QuantizationStateWriter {
         fieldQuantizationStates.add(new FieldQuantizationState(fieldNumber, stateBytes, position));
     }
 
+    public void writeProfilerState(int fieldNumber, SegmentProfilerState profilerState) throws IOException {
+        log.info("[KNN Stats] Writing profiler state for field number: {}", fieldNumber);
+        try {
+            byte[] stateBytes = profilerState.toByteArray();
+            long position = output.getFilePointer();
+            output.writeBytes(stateBytes, 0, stateBytes.length);
+            fieldProfilerStates.add(new FieldProfilerState(fieldNumber, stateBytes, position));
+            log.info("[KNN Stats] Successfully wrote profiler state of {} bytes at position {}", stateBytes.length, position);
+        } catch (Exception e) {
+            log.error("[KNN Stats] Error writing profiler state: {}", e.getMessage());
+            throw e;
+        }
+    }
+
     /**
      * Writes index footer and other index information for parsing later
      * @throws IOException could be thrown while writing
      */
+
     public void writeFooter() throws IOException {
         long indexStartPosition = output.getFilePointer();
+        log.info("[KNN Stats] Writing footer starting at position: {}", indexStartPosition);
+
         output.writeInt(fieldQuantizationStates.size());
-        for (FieldQuantizationState fieldQuantizationState : fieldQuantizationStates) {
-            output.writeInt(fieldQuantizationState.fieldNumber);
-            output.writeInt(fieldQuantizationState.stateBytes.length);
-            output.writeVLong(fieldQuantizationState.position);
+        log.info("[KNN Stats] Writing {} quantization states", fieldQuantizationStates.size());
+        for (FieldQuantizationState state : fieldQuantizationStates) {
+            output.writeInt(state.fieldNumber);
+            output.writeInt(state.stateBytes.length);
+            output.writeVLong(state.position);
         }
+
+        output.writeInt(fieldProfilerStates.size());
+        log.info("[KNN Stats] Writing {} profiler states", fieldProfilerStates.size());
+        for (FieldProfilerState state : fieldProfilerStates) {
+            output.writeInt(state.fieldNumber);
+            output.writeInt(state.stateBytes.length);
+            output.writeVLong(state.position);
+            log.info(
+                "[KNN Stats] Writing index for profiler state: field={}, length={}, position={}",
+                state.fieldNumber,
+                state.stateBytes.length,
+                state.position
+            );
+        }
+
         output.writeLong(indexStartPosition);
         output.writeInt(-1);
+        log.info("[KNN Stats] Wrote footer index position: {} and marker: -1", indexStartPosition);
         CodecUtil.writeFooter(output);
     }
 
     @AllArgsConstructor
     private static class FieldQuantizationState {
+        final int fieldNumber;
+        final byte[] stateBytes;
+        @Setter
+        Long position;
+    }
+
+    @AllArgsConstructor
+    private static class FieldProfilerState {
         final int fieldNumber;
         final byte[] stateBytes;
         @Setter

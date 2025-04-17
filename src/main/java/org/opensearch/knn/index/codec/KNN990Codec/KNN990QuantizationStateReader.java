@@ -13,6 +13,7 @@ import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.opensearch.knn.common.KNNConstants;
+import org.opensearch.knn.profiler.SegmentProfilerState;
 import org.opensearch.knn.quantization.enums.ScalarQuantizationType;
 import org.opensearch.knn.quantization.models.quantizationParams.ScalarQuantizationParams;
 import org.opensearch.knn.quantization.models.quantizationState.MultiBitScalarQuantizationState;
@@ -21,6 +22,8 @@ import org.opensearch.knn.quantization.models.quantizationState.QuantizationStat
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationStateReadConfig;
 
 import java.io.IOException;
+
+import static org.opensearch.knn.index.codec.KNN990Codec.KNN990QuantizationStateWriter.NATIVE_ENGINES_990_KNN_VECTORS_FORMAT_QS_DATA;
 
 /**
  * Reads quantization states
@@ -55,18 +58,18 @@ public final class KNN990QuantizationStateReader {
         int fieldNumber = segmentReadState.fieldInfos.fieldInfo(field).getFieldNumber();
 
         try (IndexInput input = segmentReadState.directory.openInput(quantizationStateFileName, IOContext.DEFAULT)) {
-
             CodecUtil.retrieveChecksum(input);
             int numFields = getNumFields(input);
 
             long position = -1;
             int length = 0;
 
-            // Read each field's metadata from the index section, break when correct field is found
             for (int i = 0; i < numFields; i++) {
                 int tempFieldNumber = input.readInt();
                 int tempLength = input.readInt();
                 long tempPosition = input.readVLong();
+                long profilerPosition = input.readVLong();
+
                 if (tempFieldNumber == fieldNumber) {
                     position = tempPosition;
                     length = tempLength;
@@ -80,8 +83,8 @@ public final class KNN990QuantizationStateReader {
 
             byte[] stateBytes = readStateBytes(input, position, length);
 
-            // Deserialize the byte array to a quantization state object
             ScalarQuantizationType scalarQuantizationType = ((ScalarQuantizationParams) readConfig.getQuantizationParams()).getSqType();
+
             switch (scalarQuantizationType) {
                 case ONE_BIT:
                     return OneBitScalarQuantizationState.fromByteArray(stateBytes);
@@ -95,7 +98,7 @@ public final class KNN990QuantizationStateReader {
     }
 
     @VisibleForTesting
-    static int getNumFields(IndexInput input) throws IOException {
+    public static int getNumFields(IndexInput input) throws IOException {
         long footerStart = input.length() - CodecUtil.footerLength();
         long markerAndIndexPosition = footerStart - Integer.BYTES - Long.BYTES;
         input.seek(markerAndIndexPosition);
@@ -105,15 +108,98 @@ public final class KNN990QuantizationStateReader {
     }
 
     @VisibleForTesting
-    static byte[] readStateBytes(IndexInput input, long position, int length) throws IOException {
+    public static byte[] readStateBytes(IndexInput input, long position, int length) throws IOException {
         input.seek(position);
         byte[] stateBytes = new byte[length];
         input.readBytes(stateBytes, 0, length);
         return stateBytes;
     }
 
-    @VisibleForTesting
-    static String getQuantizationStateFileName(SegmentReadState state) {
-        return IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, KNNConstants.QUANTIZATION_STATE_FILE_SUFFIX);
+    private static String getQuantizationStateFileName(SegmentReadState state) {
+        String segmentName = state.segmentInfo.name;
+        String segmentSuffix = state.segmentSuffix;
+
+        if (segmentSuffix != null && segmentSuffix.endsWith(".")) {
+            segmentSuffix = segmentSuffix.substring(0, segmentSuffix.length() - 1);
+        }
+
+        return IndexFileNames.segmentFileName(segmentName, segmentSuffix, KNNConstants.QUANTIZATION_STATE_FILE_SUFFIX);
+    }
+
+    /**
+     * Reads a profiler state for a given field from the quantization state file
+     *
+     * @param readConfig configuration for reading the state
+     * @return segment profiler state containing statistical information
+     * @throws IOException if an error occurs during reading
+     */
+    public static SegmentProfilerState readProfilerState(QuantizationStateReadConfig readConfig) throws IOException {
+        SegmentReadState segmentReadState = readConfig.getSegmentReadState();
+        String field = readConfig.getField();
+        String fileName = getQuantizationStateFileName(segmentReadState);
+        log.info("[KNN Stats] Reading profiler state from file: {} for field: {}", fileName, field);
+        int fieldNumber = segmentReadState.fieldInfos.fieldInfo(field).getFieldNumber();
+        log.info("[KNN Stats] Field number for {}: {}", field, fieldNumber);
+
+        try (IndexInput input = segmentReadState.directory.openInput(fileName, IOContext.DEFAULT)) {
+            long fileLength = input.length();
+            log.info("[KNN Stats] File length: {}", fileLength);
+
+            CodecUtil.checkHeader(input, NATIVE_ENGINES_990_KNN_VECTORS_FORMAT_QS_DATA, 0, 0);
+            log.info("[KNN Stats] Header check passed");
+
+            // Find footer and index position
+            long footerStart = fileLength - CodecUtil.footerLength();
+            input.seek(footerStart - Integer.BYTES - Long.BYTES);
+            long indexStartPosition = input.readLong();
+            int marker = input.readInt();
+            log.info("[KNN Stats] Index position: {}, marker: {}", indexStartPosition, marker);
+
+            // Read index
+            input.seek(indexStartPosition);
+            int numQuantizationStates = input.readInt();
+            log.info("[KNN Stats] Quantization states count: {}", numQuantizationStates);
+
+            // Skip quantization states
+            for (int i = 0; i < numQuantizationStates; i++) {
+                input.readInt();    // field number
+                input.readInt();    // length
+                input.readVLong();  // position
+            }
+
+            // Read profiler states
+            int numProfilerStates = input.readInt();
+            log.info("[KNN Stats] Profiler states count: {}", numProfilerStates);
+
+            for (int i = 0; i < numProfilerStates; i++) {
+                int currentFieldNumber = input.readInt();
+                int stateLength = input.readInt();
+                long statePosition = input.readVLong();
+
+                log.info("[KNN Stats] Profiler state: field={}, length={}, position={}", currentFieldNumber, stateLength, statePosition);
+
+                if (currentFieldNumber == fieldNumber) {
+                    log.info("[KNN Stats] Found matching field number {}", fieldNumber);
+
+                    // Read the state bytes
+                    input.seek(statePosition);
+                    byte[] stateBytes = new byte[stateLength];
+                    input.readBytes(stateBytes, 0, stateLength);
+
+                    try {
+                        SegmentProfilerState profilerState = SegmentProfilerState.fromByteArray(stateBytes);
+                        int dimensionsCount = profilerState.getStatistics().size();
+                        log.info("[KNN Stats] Successfully deserialized profiler state with {} dimensions", dimensionsCount);
+                        return profilerState;
+                    } catch (Exception e) {
+                        log.error("[KNN Stats] Failed to deserialize profiler state: {}", e.getMessage(), e);
+                        throw new IOException("Failed to deserialize profiler state", e);
+                    }
+                }
+            }
+
+            log.warn("[KNN Stats] No profiler state found for field number {}", fieldNumber);
+        }
+        return null;
     }
 }

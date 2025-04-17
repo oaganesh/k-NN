@@ -18,7 +18,6 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.IOContext;
-import org.apache.lucene.store.IndexOutput;
 import org.opensearch.action.admin.indices.stats.IndexStats;
 import org.opensearch.action.admin.indices.stats.ShardStats;
 import org.opensearch.core.xcontent.XContentBuilder;
@@ -26,6 +25,11 @@ import org.opensearch.env.Environment;
 import org.opensearch.knn.index.codec.util.KNNCodecUtil;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.EOFException;
+import java.io.DataInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -90,50 +94,6 @@ public class SegmentProfilerState {
      */
     public SegmentProfilerState(final List<SummaryStatistics> statistics) {
         this.statistics = statistics;
-    }
-
-    /**
-     * Writes statistical data to a JSON file.
-     * Stores raw statistics data to disk for later retrieval.
-     * Called during vector indexing/processing.
-     * @param outputFile Path to output file
-     * @param statistics List of statistics to write
-     * @param fieldName Name of the field being processed
-     * @param vectorCount Total number of vectors
-     */
-    private static void writeStatsToFile(
-        final Path outputFile,
-        final List<SummaryStatistics> statistics,
-        final String fieldName,
-        final int vectorCount
-    ) throws IOException {
-        Directory directory = FSDirectory.open(outputFile.getParent());
-        String fileName = outputFile.getFileName().toString();
-
-        try (IndexOutput output = directory.createOutput(fileName, IOContext.DEFAULT)) {
-            CodecUtil.writeHeader(output, VECTOR_OUTPUT_FILE, 0);
-
-            output.writeString(ISO_FORMATTER.format(Instant.now()));
-            output.writeString(fieldName);
-            output.writeInt(vectorCount);
-            output.writeInt(statistics.size());
-
-            for (int i = 0; i < statistics.size(); i++) {
-                SummaryStatistics stats = statistics.get(i);
-                output.writeInt(i);
-                output.writeLong(stats.getN());
-                output.writeLong(Double.doubleToLongBits(stats.getMin()));
-                output.writeLong(Double.doubleToLongBits(stats.getMax()));
-                output.writeLong(Double.doubleToLongBits(stats.getSum()));
-                output.writeLong(Double.doubleToLongBits(stats.getMean()));
-                output.writeLong(Double.doubleToLongBits(Math.sqrt(stats.getVariance())));
-                output.writeLong(Double.doubleToLongBits(stats.getVariance()));
-            }
-
-            CodecUtil.writeFooter(output);
-        } finally {
-            directory.close();
-        }
     }
 
     /**
@@ -257,7 +217,7 @@ public class SegmentProfilerState {
 
         Directory directory = getUnderlyingDirectory(segmentWriteState.directory);
         Path statsFile = ((FSDirectory) directory).getDirectory().resolve(statsFileName);
-        writeStatsToFile(statsFile, profilerState.statistics, fieldName, vectorCount);
+        // writeStatsToFile(statsFile, profilerState.statistics, fieldName, vectorCount);
 
         return profilerState;
     }
@@ -486,4 +446,89 @@ public class SegmentProfilerState {
         }
         return stats;
     }
+
+    /**
+     * Serializes a byte array into a SegmentProfilerState object
+     * @return
+     * @throws IOException
+     */
+    public byte[] toByteArray() throws IOException {
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream(); DataOutputStream dos = new DataOutputStream(baos)) {
+
+            dos.writeInt(statistics.size());
+
+            for (SummaryStatistics stats : statistics) {
+                dos.writeLong(stats.getN());
+                dos.writeDouble(stats.getMin());
+                dos.writeDouble(stats.getMax());
+                dos.writeDouble(stats.getSum());
+                dos.writeDouble(stats.getMean());
+                dos.writeDouble(stats.getStandardDeviation());
+                dos.writeDouble(stats.getVariance());
+            }
+
+            dos.flush();
+            return baos.toByteArray();
+        }
+    }
+
+    /**
+     * Deserializes a byte array into a SegmentProfilerState object
+     * @param bytes Byte array to deserialize
+     * @return Deserialized SegmentProfilerState object
+     * @throws IOException If an I/O error occurs during deserialization
+     */
+    public static SegmentProfilerState fromByteArray(byte[] bytes) throws IOException {
+        log.debug("[KNN Stats] Deserializing profiler state, byte length: {}", bytes.length);
+
+        try (ByteArrayInputStream bais = new ByteArrayInputStream(bytes); DataInputStream dis = new DataInputStream(bais)) {
+
+            int dimensions = dis.readInt();
+            log.debug("[KNN Stats] Profiler state has {} dimensions", dimensions);
+
+            if (dimensions <= 0 || dimensions > 10000) {
+                throw new IOException("Invalid dimension count: " + dimensions);
+            }
+
+            List<SummaryStatistics> statistics = new ArrayList<>(dimensions);
+
+            for (int i = 0; i < dimensions; i++) {
+                SummaryStatistics stats = new SummaryStatistics();
+                long n = dis.readLong();
+                double min = dis.readDouble();
+                double max = dis.readDouble();
+                double sum = dis.readDouble();
+                double mean = dis.readDouble();
+                double stdDev = dis.readDouble();
+                double variance = dis.readDouble();
+
+                log.debug("[KNN Stats] Dimension {}: count={}, min={}, max={}, mean={}, stdDev={}", i, n, min, max, mean, stdDev);
+
+                if (n > 0) {
+                    stats.addValue(min);
+                    if (n > 1) {
+                        stats.addValue(max);
+                    }
+                    if (n > 2) {
+                        double remainingMean = (sum - min - max) / (n - 2);
+                        for (long j = 0; j < n - 2; j++) {
+                            stats.addValue(remainingMean);
+                        }
+                    }
+                }
+
+                statistics.add(stats);
+            }
+
+            log.debug("[KNN Stats] Successfully deserialized profiler state");
+            return new SegmentProfilerState(statistics);
+        } catch (EOFException e) {
+            log.error("[KNN Stats] EOF while deserializing: expected more data", e);
+            throw e;
+        } catch (Exception e) {
+            log.error("[KNN Stats] Error deserializing profiler state: {}", e.getMessage(), e);
+            throw e;
+        }
+    }
+
 }
