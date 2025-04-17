@@ -98,7 +98,7 @@ public final class KNN990QuantizationStateReader {
     }
 
     @VisibleForTesting
-    public static int getNumFields(IndexInput input) throws IOException {
+    static int getNumFields(IndexInput input) throws IOException {
         long footerStart = input.length() - CodecUtil.footerLength();
         long markerAndIndexPosition = footerStart - Integer.BYTES - Long.BYTES;
         input.seek(markerAndIndexPosition);
@@ -108,14 +108,19 @@ public final class KNN990QuantizationStateReader {
     }
 
     @VisibleForTesting
-    public static byte[] readStateBytes(IndexInput input, long position, int length) throws IOException {
+    static byte[] readStateBytes(IndexInput input, long position, int length) throws IOException {
         input.seek(position);
         byte[] stateBytes = new byte[length];
         input.readBytes(stateBytes, 0, length);
         return stateBytes;
     }
 
-    private static String getQuantizationStateFileName(SegmentReadState state) {
+//    @VisibleForTesting
+//    static String getQuantizationStateFileName(SegmentReadState state) {
+//        return IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, KNNConstants.QUANTIZATION_STATE_FILE_SUFFIX);
+//    }
+
+    static String getQuantizationStateFileName(SegmentReadState state) {
         String segmentName = state.segmentInfo.name;
         String segmentSuffix = state.segmentSuffix;
 

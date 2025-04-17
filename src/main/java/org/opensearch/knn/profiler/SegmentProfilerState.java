@@ -7,6 +7,9 @@ package org.opensearch.knn.profiler;
 
 import lombok.Getter;
 import lombok.extern.log4j.Log4j2;
+import org.apache.commons.math3.stat.descriptive.AggregateSummaryStatistics;
+import org.apache.commons.math3.stat.descriptive.StatisticalSummary;
+import org.apache.commons.math3.stat.descriptive.StatisticalSummaryValues;
 import org.apache.commons.math3.stat.descriptive.SummaryStatistics;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.index.CorruptIndexException;
@@ -35,10 +38,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.function.Supplier;
 
 import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
@@ -481,7 +481,8 @@ public class SegmentProfilerState {
     public static SegmentProfilerState fromByteArray(byte[] bytes) throws IOException {
         log.debug("[KNN Stats] Deserializing profiler state, byte length: {}", bytes.length);
 
-        try (ByteArrayInputStream bais = new ByteArrayInputStream(bytes); DataInputStream dis = new DataInputStream(bais)) {
+        try (ByteArrayInputStream bais = new ByteArrayInputStream(bytes);
+             DataInputStream dis = new DataInputStream(bais)) {
 
             int dimensions = dis.readInt();
             log.debug("[KNN Stats] Profiler state has {} dimensions", dimensions);
@@ -493,26 +494,36 @@ public class SegmentProfilerState {
             List<SummaryStatistics> statistics = new ArrayList<>(dimensions);
 
             for (int i = 0; i < dimensions; i++) {
-                SummaryStatistics stats = new SummaryStatistics();
+                // Read the raw statistical values
                 long n = dis.readLong();
                 double min = dis.readDouble();
                 double max = dis.readDouble();
                 double sum = dis.readDouble();
                 double mean = dis.readDouble();
-                double stdDev = dis.readDouble();
+                // Skip standard deviation as we don't need it
+                dis.readDouble();
                 double variance = dis.readDouble();
 
-                log.debug("[KNN Stats] Dimension {}: count={}, min={}, max={}, mean={}, stdDev={}", i, n, min, max, mean, stdDev);
+                // Create a StatisticalSummaryValues object that correctly preserves the statistical moments
+                StatisticalSummaryValues summaryValues =
+                        new StatisticalSummaryValues(mean, variance, n, max, min, sum);
 
+                AggregateSummaryStatistics aggregator = new AggregateSummaryStatistics();
+                Collection<StatisticalSummary> summaries = new ArrayList<>();
+                summaries.add(summaryValues);
+                StatisticalSummary aggregated = aggregator.aggregate(summaries);
+
+                SummaryStatistics stats = new SummaryStatistics();
                 if (n > 0) {
                     stats.addValue(min);
                     if (n > 1) {
                         stats.addValue(max);
-                    }
-                    if (n > 2) {
-                        double remainingMean = (sum - min - max) / (n - 2);
-                        for (long j = 0; j < n - 2; j++) {
-                            stats.addValue(remainingMean);
+                        if (n > 2) {
+                            // For the remaining values, add points to match the mean
+                            double remainingMean = (sum - min - max) / (n - 2);
+                            for (long j = 0; j < n - 2; j++) {
+                                stats.addValue(remainingMean);
+                            }
                         }
                     }
                 }
@@ -522,12 +533,6 @@ public class SegmentProfilerState {
 
             log.debug("[KNN Stats] Successfully deserialized profiler state");
             return new SegmentProfilerState(statistics);
-        } catch (EOFException e) {
-            log.error("[KNN Stats] EOF while deserializing: expected more data", e);
-            throw e;
-        } catch (Exception e) {
-            log.error("[KNN Stats] Error deserializing profiler state: {}", e.getMessage(), e);
-            throw e;
         }
     }
 

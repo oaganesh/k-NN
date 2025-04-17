@@ -37,6 +37,7 @@ import org.opensearch.knn.index.memory.NativeMemoryEntryContext;
 import org.opensearch.knn.index.memory.NativeMemoryLoadStrategy;
 import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.query.SegmentLevelQuantizationUtil;
+import org.opensearch.knn.profiler.ProfilerStateCollector;
 import org.opensearch.knn.profiler.SegmentProfilerState;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationStateReadConfig;
 
@@ -100,7 +101,7 @@ public class KNNIndexShard {
     }
 
     /**
-     * Load all the k-NN segments for this shard into the cache.
+     * Load all of the k-NN segments for this shard into the cache.
      *
      * @throws IOException Thrown when getting the HNSW Paths to be loaded in
      */
@@ -364,175 +365,205 @@ public class KNNIndexShard {
      * @return
      * @throws IOException
      */
+//    public Map<String, List<SummaryStatistics>> collectShardStatistics() throws IOException {
+//        Map<String, List<List<SummaryStatistics>>> fieldSegmentStats = new HashMap<>();
+//        log.info("[KNN Debug] Starting statistics collection in shard {}", indexShard.shardId());
+//
+//        try (Engine.Searcher searcher = indexShard.acquireSearcher("knn-stats-collection")) {
+//            for (LeafReaderContext leafContext : searcher.getIndexReader().leaves()) {
+//                SegmentReader segmentReader = Lucene.segmentReader(leafContext.reader());
+//                String segmentName = segmentReader.getSegmentName();
+//                log.info("[KNN Debug] Processing segment: {}", segmentName);
+//
+//                // Get directory info for this segment
+//                Directory directory = segmentReader.directory();
+//                if (directory instanceof FSDirectory) {
+//                    Path dirPath = ((FSDirectory) directory).getDirectory();
+//                    log.info("[KNN Debug] Directory path for segment {}: {}", segmentName, dirPath);
+//
+//                    // List all files in the directory
+//                    log.info("[KNN Debug] Files in directory: {}", String.join(", ", directory.listAll()));
+//                }
+//
+//                // List all KNN fields
+//                Map<Integer, String> fieldNumberToName = new HashMap<>();
+//                for (FieldInfo fieldInfo : segmentReader.getFieldInfos()) {
+//                    if (fieldInfo.attributes().containsKey(KNNVectorFieldMapper.KNN_FIELD)) {
+//                        fieldNumberToName.put(fieldInfo.number, fieldInfo.name);
+//                        log.info("[KNN Debug] Found KNN field: {} (number: {})", fieldInfo.name, fieldInfo.number);
+//                    }
+//                }
+//
+//                // Log all files in directory
+//                String[] files = segmentReader.directory().listAll();
+//                log.info("[KNN Debug] Files in segment {}: {}", segmentName, String.join(", ", files));
+//
+//                // Look specifically for quantization state files
+//                for (String file : files) {
+//                    if (file.endsWith(KNNConstants.QUANTIZATION_STATE_FILE_SUFFIX)) {
+//                        log.info("[KNN Debug] Found quantization state file: {}", file);
+//
+//                        // Try to read the file directly for diagnostics
+//                        try (IndexInput input = segmentReader.directory().openInput(file, IOContext.DEFAULT)) {
+//                            // Check header
+//                            try {
+//                                // Use the string constant directly to avoid reference issues
+//                                CodecUtil.checkHeader(input, "NativeEngines990KnnVectorsFormatQSData", 0, 0);
+//                                log.info("[KNN Debug] Successfully verified header for file: {}", file);
+//                            } catch (Exception e) {
+//                                log.error("[KNN Debug] Invalid header in file {}: {}", file, e.getMessage());
+//                                continue;
+//                            }
+//
+//                            // Read footer to find index position
+//                            long fileLength = input.length();
+//                            long footerStart = fileLength - CodecUtil.footerLength();
+//                            input.seek(footerStart - Integer.BYTES - Long.BYTES);
+//                            long indexStartPosition = input.readLong();
+//                            int marker = input.readInt();
+//                            log.info(
+//                                "[KNN Debug] File: {}, length: {}, index position: {}, marker: {}",
+//                                file,
+//                                fileLength,
+//                                indexStartPosition,
+//                                marker
+//                            );
+//
+//                            // Read index
+//                            input.seek(indexStartPosition);
+//                            int numQuantizationStates = input.readInt();
+//                            log.info("[KNN Debug] Quantization states: {}", numQuantizationStates);
+//
+//                            // Skip quantization states
+//                            for (int i = 0; i < numQuantizationStates; i++) {
+//                                input.readInt();    // field number
+//                                input.readInt();    // length
+//                                input.readVLong();  // position
+//                            }
+//
+//                            // Read profiler states
+//                            int numProfilerStates = input.readInt();
+//                            log.info("[KNN Debug] Profiler states: {}", numProfilerStates);
+//
+//                            List<Integer> foundFieldNumbers = new ArrayList<>();
+//                            for (int i = 0; i < numProfilerStates; i++) {
+//                                int fieldNumber = input.readInt();
+//                                int length = input.readInt();
+//                                long position = input.readVLong();
+//                                foundFieldNumbers.add(fieldNumber);
+//
+//                                String fieldName = fieldNumberToName.get(fieldNumber);
+//                                log.info(
+//                                    "[KNN Debug] Found profiler state: field={} ({}), length={}, position={}",
+//                                    fieldNumber,
+//                                    fieldName,
+//                                    length,
+//                                    position
+//                                );
+//
+//                                if (fieldName != null) {
+//                                    // Try to read this profiler state
+//                                    long currentPosition = input.getFilePointer();
+//                                    input.seek(position);
+//                                    byte[] stateBytes = new byte[length];
+//                                    input.readBytes(stateBytes, 0, length);
+//
+//                                    try {
+//                                        SegmentProfilerState profilerState = SegmentProfilerState.fromByteArray(stateBytes);
+//                                        log.info(
+//                                            "[KNN Debug] Successfully read profiler state for field {} with {} dimensions",
+//                                            fieldName,
+//                                            profilerState.getStatistics().size()
+//                                        );
+//
+//                                        // Store the statistics
+//                                        fieldSegmentStats.computeIfAbsent(fieldName, k -> new ArrayList<>())
+//                                            .add(profilerState.getStatistics());
+//                                    } catch (Exception e) {
+//                                        log.error("[KNN Debug] Failed to deserialize profiler state: {}", e.getMessage());
+//                                    }
+//
+//                                    // Return to the index position
+//                                    input.seek(currentPosition);
+//                                } else {
+//                                    log.warn("[KNN Debug] Found profiler state for unknown field number: {}", fieldNumber);
+//                                }
+//                            }
+//
+//                            // Compare found field numbers with what we expected
+//                            Set<Integer> missingFields = new HashSet<>(fieldNumberToName.keySet());
+//                            missingFields.removeAll(foundFieldNumbers);
+//                            if (!missingFields.isEmpty()) {
+//                                log.warn("[KNN Debug] Some KNN fields have no profiler states: {}", missingFields);
+//                            }
+//                        } catch (Exception e) {
+//                            log.error("[KNN Debug] Error reading file {}: {}", file, e.getMessage(), e);
+//                        }
+//                    }
+//                }
+//            }
+//
+//            // Aggregate statistics for each field
+//            Map<String, List<SummaryStatistics>> aggregatedFieldStats = new HashMap<>();
+//            for (Map.Entry<String, List<List<SummaryStatistics>>> entry : fieldSegmentStats.entrySet()) {
+//                String fieldName = entry.getKey();
+//                List<List<SummaryStatistics>> segmentStats = entry.getValue();
+//
+//                if (!segmentStats.isEmpty()) {
+//                    List<SummaryStatistics> aggregatedStats = SegmentLevelQuantizationUtil.aggregateStatistics(segmentStats);
+//                    aggregatedFieldStats.put(fieldName, aggregatedStats);
+//
+//                    // Log aggregated statistics
+//                    log.info("[KNN Stats] ===== Aggregated statistics for field: {} =====", fieldName);
+//                    log.info("[KNN Stats] Number of segments aggregated: {}", segmentStats.size());
+//                    log.info("[KNN Stats] Total dimensions: {}", aggregatedStats.size());
+//
+//                    for (int i = 0; i < aggregatedStats.size(); i++) {
+//                        SummaryStatistics dim = aggregatedStats.get(i);
+//                        log.info(
+//                            "[KNN Stats] Dimension {}: count={}, min={}, max={}, mean={}, stddev={}",
+//                            i,
+//                            dim.getN(),
+//                            SegmentProfilerState.formatDouble(dim.getMin()),
+//                            SegmentProfilerState.formatDouble(dim.getMax()),
+//                            SegmentProfilerState.formatDouble(dim.getMean()),
+//                            SegmentProfilerState.formatDouble(dim.getStandardDeviation())
+//                        );
+//                    }
+//                }
+//            }
+//
+//            return aggregatedFieldStats;
+//        }
+//    }
+
     public Map<String, List<SummaryStatistics>> collectShardStatistics() throws IOException {
         Map<String, List<List<SummaryStatistics>>> fieldSegmentStats = new HashMap<>();
-        log.info("[KNN Debug] Starting statistics collection in shard {}", indexShard.shardId());
 
         try (Engine.Searcher searcher = indexShard.acquireSearcher("knn-stats-collection")) {
             for (LeafReaderContext leafContext : searcher.getIndexReader().leaves()) {
-                SegmentReader segmentReader = Lucene.segmentReader(leafContext.reader());
-                String segmentName = segmentReader.getSegmentName();
-                log.info("[KNN Debug] Processing segment: {}", segmentName);
-
-                // Get directory info for this segment
-                Directory directory = segmentReader.directory();
-                if (directory instanceof FSDirectory) {
-                    Path dirPath = ((FSDirectory) directory).getDirectory();
-                    log.info("[KNN Debug] Directory path for segment {}: {}", segmentName, dirPath);
-
-                    // List all files in the directory
-                    log.info("[KNN Debug] Files in directory: {}", String.join(", ", directory.listAll()));
-                }
-
-                // List all KNN fields
-                Map<Integer, String> fieldNumberToName = new HashMap<>();
-                for (FieldInfo fieldInfo : segmentReader.getFieldInfos()) {
+                for (FieldInfo fieldInfo : Lucene.segmentReader(leafContext.reader()).getFieldInfos()) {
                     if (fieldInfo.attributes().containsKey(KNNVectorFieldMapper.KNN_FIELD)) {
-                        fieldNumberToName.put(fieldInfo.number, fieldInfo.name);
-                        log.info("[KNN Debug] Found KNN field: {} (number: {})", fieldInfo.name, fieldInfo.number);
-                    }
-                }
+                        String fieldName = fieldInfo.name;
 
-                // Log all files in directory
-                String[] files = segmentReader.directory().listAll();
-                log.info("[KNN Debug] Files in segment {}: {}", segmentName, String.join(", ", files));
+                        ProfilerStateCollector collector = new ProfilerStateCollector();
+                        leafContext.reader().searchNearestVectors(fieldName, new float[0], collector, null);
 
-                // Look specifically for quantization state files
-                for (String file : files) {
-                    if (file.endsWith(KNNConstants.QUANTIZATION_STATE_FILE_SUFFIX)) {
-                        log.info("[KNN Debug] Found quantization state file: {}", file);
-
-                        // Try to read the file directly for diagnostics
-                        try (IndexInput input = segmentReader.directory().openInput(file, IOContext.DEFAULT)) {
-                            // Check header
-                            try {
-                                // Use the string constant directly to avoid reference issues
-                                CodecUtil.checkHeader(input, "NativeEngines990KnnVectorsFormatQSData", 0, 0);
-                                log.info("[KNN Debug] Successfully verified header for file: {}", file);
-                            } catch (Exception e) {
-                                log.error("[KNN Debug] Invalid header in file {}: {}", file, e.getMessage());
-                                continue;
-                            }
-
-                            // Read footer to find index position
-                            long fileLength = input.length();
-                            long footerStart = fileLength - CodecUtil.footerLength();
-                            input.seek(footerStart - Integer.BYTES - Long.BYTES);
-                            long indexStartPosition = input.readLong();
-                            int marker = input.readInt();
-                            log.info(
-                                "[KNN Debug] File: {}, length: {}, index position: {}, marker: {}",
-                                file,
-                                fileLength,
-                                indexStartPosition,
-                                marker
-                            );
-
-                            // Read index
-                            input.seek(indexStartPosition);
-                            int numQuantizationStates = input.readInt();
-                            log.info("[KNN Debug] Quantization states: {}", numQuantizationStates);
-
-                            // Skip quantization states
-                            for (int i = 0; i < numQuantizationStates; i++) {
-                                input.readInt();    // field number
-                                input.readInt();    // length
-                                input.readVLong();  // position
-                            }
-
-                            // Read profiler states
-                            int numProfilerStates = input.readInt();
-                            log.info("[KNN Debug] Profiler states: {}", numProfilerStates);
-
-                            List<Integer> foundFieldNumbers = new ArrayList<>();
-                            for (int i = 0; i < numProfilerStates; i++) {
-                                int fieldNumber = input.readInt();
-                                int length = input.readInt();
-                                long position = input.readVLong();
-                                foundFieldNumbers.add(fieldNumber);
-
-                                String fieldName = fieldNumberToName.get(fieldNumber);
-                                log.info(
-                                    "[KNN Debug] Found profiler state: field={} ({}), length={}, position={}",
-                                    fieldNumber,
-                                    fieldName,
-                                    length,
-                                    position
-                                );
-
-                                if (fieldName != null) {
-                                    // Try to read this profiler state
-                                    long currentPosition = input.getFilePointer();
-                                    input.seek(position);
-                                    byte[] stateBytes = new byte[length];
-                                    input.readBytes(stateBytes, 0, length);
-
-                                    try {
-                                        SegmentProfilerState profilerState = SegmentProfilerState.fromByteArray(stateBytes);
-                                        log.info(
-                                            "[KNN Debug] Successfully read profiler state for field {} with {} dimensions",
-                                            fieldName,
-                                            profilerState.getStatistics().size()
-                                        );
-
-                                        // Store the statistics
-                                        fieldSegmentStats.computeIfAbsent(fieldName, k -> new ArrayList<>())
-                                            .add(profilerState.getStatistics());
-                                    } catch (Exception e) {
-                                        log.error("[KNN Debug] Failed to deserialize profiler state: {}", e.getMessage());
-                                    }
-
-                                    // Return to the index position
-                                    input.seek(currentPosition);
-                                } else {
-                                    log.warn("[KNN Debug] Found profiler state for unknown field number: {}", fieldNumber);
-                                }
-                            }
-
-                            // Compare found field numbers with what we expected
-                            Set<Integer> missingFields = new HashSet<>(fieldNumberToName.keySet());
-                            missingFields.removeAll(foundFieldNumbers);
-                            if (!missingFields.isEmpty()) {
-                                log.warn("[KNN Debug] Some KNN fields have no profiler states: {}", missingFields);
-                            }
-                        } catch (Exception e) {
-                            log.error("[KNN Debug] Error reading file {}: {}", file, e.getMessage(), e);
+                        if (collector.getProfilerState() != null) {
+                            fieldSegmentStats.computeIfAbsent(fieldName, k -> new ArrayList<>())
+                                    .add(collector.getProfilerState().getStatistics());
                         }
                     }
                 }
             }
-
-            // Aggregate statistics for each field
-            Map<String, List<SummaryStatistics>> aggregatedFieldStats = new HashMap<>();
-            for (Map.Entry<String, List<List<SummaryStatistics>>> entry : fieldSegmentStats.entrySet()) {
-                String fieldName = entry.getKey();
-                List<List<SummaryStatistics>> segmentStats = entry.getValue();
-
-                if (!segmentStats.isEmpty()) {
-                    List<SummaryStatistics> aggregatedStats = SegmentLevelQuantizationUtil.aggregateStatistics(segmentStats);
-                    aggregatedFieldStats.put(fieldName, aggregatedStats);
-
-                    // Log aggregated statistics
-                    log.info("[KNN Stats] ===== Aggregated statistics for field: {} =====", fieldName);
-                    log.info("[KNN Stats] Number of segments aggregated: {}", segmentStats.size());
-                    log.info("[KNN Stats] Total dimensions: {}", aggregatedStats.size());
-
-                    for (int i = 0; i < aggregatedStats.size(); i++) {
-                        SummaryStatistics dim = aggregatedStats.get(i);
-                        log.info(
-                            "[KNN Stats] Dimension {}: count={}, min={}, max={}, mean={}, stddev={}",
-                            i,
-                            dim.getN(),
-                            SegmentProfilerState.formatDouble(dim.getMin()),
-                            SegmentProfilerState.formatDouble(dim.getMax()),
-                            SegmentProfilerState.formatDouble(dim.getMean()),
-                            SegmentProfilerState.formatDouble(dim.getStandardDeviation())
-                        );
-                    }
-                }
-            }
-
-            return aggregatedFieldStats;
         }
+
+        // Aggregate statistics correctly
+        Map<String, List<SummaryStatistics>> result = new HashMap<>();
+        for (Map.Entry<String, List<List<SummaryStatistics>>> entry : fieldSegmentStats.entrySet()) {
+            result.put(entry.getKey(), SegmentLevelQuantizationUtil.aggregateStatistics(entry.getValue()));
+        }
+
+        return result;
     }
 }

@@ -66,6 +66,102 @@ public class SegmentLevelQuantizationUtil {
         return tempCollector.getQuantizationState();
     }
 
+//    public static List<SummaryStatistics> aggregateStatistics(List<List<SummaryStatistics>> segmentStats) {
+//        if (segmentStats == null || segmentStats.isEmpty()) {
+//            return new ArrayList<>();
+//        }
+//
+//        int dimensions = segmentStats.get(0).size();
+//        List<SummaryStatistics> result = new ArrayList<>(dimensions);
+//
+//        for (int dim = 0; dim < dimensions; dim++) {
+//            Collection<StatisticalSummary> dimStats = new ArrayList<>();
+//            for (List<SummaryStatistics> segmentStat : segmentStats) {
+//                dimStats.add(segmentStat.get(dim));
+//            }
+//
+//            AggregateSummaryStatistics aggregator = new AggregateSummaryStatistics();
+//            StatisticalSummary summary = aggregator.aggregate(dimStats);
+//
+//            SummaryStatistics aggregatedStats = new SummaryStatistics();
+//            if (summary.getN() > 0) {
+//                aggregatedStats.addValue(summary.getMin());
+//                if (summary.getN() > 1) {
+//                    aggregatedStats.addValue(summary.getMax());
+//                }
+//                if (summary.getN() > 2) {
+//                    double remainingMean = (summary.getSum() - summary.getMin() - summary.getMax()) / (summary.getN() - 2);
+//                    for (long j = 0; j < summary.getN() - 2; j++) {
+//                        aggregatedStats.addValue(remainingMean);
+//                    }
+//                }
+//            }
+//
+//            result.add(aggregatedStats);
+//        }
+//
+//        return result;
+//    }
+
+//    public static List<SummaryStatistics> aggregateStatistics(List<List<SummaryStatistics>> segmentStats) {
+//        if (segmentStats == null || segmentStats.isEmpty()) {
+//            return new ArrayList<>();
+//        }
+//
+//        int dimensions = segmentStats.get(0).size();
+//        List<SummaryStatistics> result = new ArrayList<>(dimensions);
+//
+//        for (int dim = 0; dim < dimensions; dim++) {
+//            SummaryStatistics aggregated = new SummaryStatistics();
+//
+//            long totalN = 0;
+//            double weightedMean = 0;
+//            double weightedVarianceSum = 0;
+//            double min = Double.MAX_VALUE;
+//            double max = Double.MIN_VALUE;
+//
+//            for (List<SummaryStatistics> segmentStat : segmentStats) {
+//                SummaryStatistics dimStat = segmentStat.get(dim);
+//                if (dimStat.getN() > 0) {
+//                    min = Math.min(min, dimStat.getMin());
+//                    max = Math.max(max, dimStat.getMax());
+//                    weightedMean += dimStat.getMean() * dimStat.getN();
+//                    totalN += dimStat.getN();
+//                }
+//            }
+//
+//            if (totalN > 0) {
+//                weightedMean /= totalN;
+//
+//                for (List<SummaryStatistics> segmentStat : segmentStats) {
+//                    SummaryStatistics dimStat = segmentStat.get(dim);
+//                    if (dimStat.getN() > 0) {
+//                        double meanDiff = dimStat.getMean() - weightedMean;
+//                        weightedVarianceSum += (dimStat.getN() - 1) * dimStat.getVariance() +
+//                                dimStat.getN() * meanDiff * meanDiff;
+//                    }
+//                }
+//
+//                aggregated.addValue(min);
+//                if (totalN > 1) {
+//                    double stdDev = Math.sqrt(weightedVarianceSum / (totalN - 1));
+//
+//                    aggregated.addValue(max);
+//
+//                    if (totalN > 2) {
+//                        for (int i = 0; i < totalN - 2; i++) {
+//                            aggregated.addValue(weightedMean);
+//                        }
+//                    }
+//                }
+//            }
+//
+//            result.add(aggregated);
+//        }
+//
+//        return result;
+//    }
+
     public static List<SummaryStatistics> aggregateStatistics(List<List<SummaryStatistics>> segmentStats) {
         if (segmentStats == null || segmentStats.isEmpty()) {
             return new ArrayList<>();
@@ -75,24 +171,35 @@ public class SegmentLevelQuantizationUtil {
         List<SummaryStatistics> result = new ArrayList<>(dimensions);
 
         for (int dim = 0; dim < dimensions; dim++) {
+            // Use AggregateSummaryStatistics to properly combine statistical moments
+            AggregateSummaryStatistics aggregator = new AggregateSummaryStatistics();
             Collection<StatisticalSummary> dimStats = new ArrayList<>();
+
             for (List<SummaryStatistics> segmentStat : segmentStats) {
-                dimStats.add(segmentStat.get(dim));
+                if (dim < segmentStat.size()) {
+                    dimStats.add(segmentStat.get(dim));
+                }
             }
 
-            AggregateSummaryStatistics aggregator = new AggregateSummaryStatistics();
             StatisticalSummary summary = aggregator.aggregate(dimStats);
 
             SummaryStatistics aggregatedStats = new SummaryStatistics();
-            if (summary.getN() > 0) {
+            long n = summary.getN();
+
+            if (n > 0) {
                 aggregatedStats.addValue(summary.getMin());
-                if (summary.getN() > 1) {
+
+                if (n > 1) {
                     aggregatedStats.addValue(summary.getMax());
-                }
-                if (summary.getN() > 2) {
-                    double remainingMean = (summary.getSum() - summary.getMin() - summary.getMax()) / (summary.getN() - 2);
-                    for (long j = 0; j < summary.getN() - 2; j++) {
-                        aggregatedStats.addValue(remainingMean);
+
+                    if (n > 2) {
+                        // Calculate the values needed to match the original sum
+                        double remainingSum = summary.getSum() - summary.getMin() - summary.getMax();
+                        double remainingMean = remainingSum / (n - 2);
+
+                        for (long i = 0; i < n - 2; i++) {
+                            aggregatedStats.addValue(remainingMean);
+                        }
                     }
                 }
             }
