@@ -49,9 +49,9 @@ public final class KNN990QuantizationStateWriter {
      */
     public KNN990QuantizationStateWriter(SegmentWriteState segmentWriteState) throws IOException {
         String quantizationStateFileName = IndexFileNames.segmentFileName(
-                segmentWriteState.segmentInfo.name,
-                segmentWriteState.segmentSuffix,
-                KNNConstants.QUANTIZATION_STATE_FILE_SUFFIX
+            segmentWriteState.segmentInfo.name,
+            segmentWriteState.segmentSuffix,
+            KNNConstants.QUANTIZATION_STATE_FILE_SUFFIX
         );
 
         output = segmentWriteState.directory.createOutput(quantizationStateFileName, segmentWriteState.context);
@@ -64,11 +64,11 @@ public final class KNN990QuantizationStateWriter {
      */
     public void writeHeader(SegmentWriteState segmentWriteState) throws IOException {
         CodecUtil.writeIndexHeader(
-                output,
-                NATIVE_ENGINES_990_KNN_VECTORS_FORMAT_QS_DATA,
-                0,
-                segmentWriteState.segmentInfo.getId(),
-                segmentWriteState.segmentSuffix
+            output,
+            NATIVE_ENGINES_990_KNN_VECTORS_FORMAT_QS_DATA,
+            0,
+            segmentWriteState.segmentInfo.getId(),
+            segmentWriteState.segmentSuffix
         );
     }
 
@@ -93,7 +93,7 @@ public final class KNN990QuantizationStateWriter {
      * @param segmentProfilerState segment profiler state
      * @throws IOException could be thrown while writing
      */
-    public void writeState(int fieldNumber, SegmentProfilerState segmentProfilerState) throws IOException {
+    public void profileWriteState(int fieldNumber, SegmentProfilerState segmentProfilerState) throws IOException {
         byte[] stateBytes = segmentProfilerState.toByteArray();
         long position = output.getFilePointer();
         output.writeBytes(stateBytes, stateBytes.length);
