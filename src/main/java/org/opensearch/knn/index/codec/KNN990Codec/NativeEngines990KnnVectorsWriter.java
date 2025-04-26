@@ -26,14 +26,18 @@ import org.opensearch.common.StopWatch;
 import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.codec.nativeindex.NativeIndexBuildStrategyFactory;
 import org.opensearch.knn.index.codec.nativeindex.NativeIndexWriter;
+import org.opensearch.knn.index.codec.nativeindex.SegmentNativeIndexBuildStrategyFactory;
 import org.opensearch.knn.index.quantizationservice.QuantizationService;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
 import org.opensearch.knn.plugin.stats.KNNGraphValue;
+import org.opensearch.knn.profiler.KNN990ProfileStateWriter;
+import org.opensearch.knn.profiler.SegmentNativeIndexWriter;
 import org.opensearch.knn.profiler.SegmentProfilerState;
 import org.opensearch.knn.quantization.models.quantizationParams.QuantizationParams;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
@@ -52,10 +56,12 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
     private final SegmentWriteState segmentWriteState;
     private final FlatVectorsWriter flatVectorsWriter;
     private KNN990QuantizationStateWriter quantizationStateWriter;
+    private KNN990ProfileStateWriter segmentProfilerStateWriter;
     private final List<NativeEngineFieldVectorsWriter<?>> fields = new ArrayList<>();
     private boolean finished;
     private final Integer approximateThreshold;
     private final NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory;
+    private SegmentNativeIndexBuildStrategyFactory segmentNativeIndexBuildStrategyFactory;
 
     public NativeEngines990KnnVectorsWriter(
         SegmentWriteState segmentWriteState,
@@ -108,9 +114,9 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                 field.getVectors()
             );
             final QuantizationState quantizationState = train(field.getFieldInfo(), knnVectorValuesSupplier, totalLiveDocs);
-            profile(field.getFieldInfo(), knnVectorValuesSupplier, totalLiveDocs);
+            final SegmentProfilerState segmentProfilerState = profile(field.getFieldInfo(), knnVectorValuesSupplier, totalLiveDocs);
             // should skip graph building only for non quantization use case and if threshold is met
-            if (quantizationState == null && shouldSkipBuildingVectorDataStructure(totalLiveDocs)) {
+            if ((quantizationState == null || segmentProfilerState == null) && shouldSkipBuildingVectorDataStructure(totalLiveDocs)) {
                 log.info(
                     "Skip building vector data structure for field: {}, as liveDoc: {} is less than the threshold {} during flush",
                     fieldInfo.name,
@@ -126,8 +132,17 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                 nativeIndexBuildStrategyFactory
             );
 
+
+//            final NativeIndexWriter profilerWriter = NativeIndexWriter.getProfilerWriter(
+//                    fieldInfo,
+//                    segmentWriteState,
+//                    segmentProfilerState,
+//                    nativeIndexBuildStrategyFactory
+//            );
+
             StopWatch stopWatch = new StopWatch().start();
             writer.flushIndex(knnVectorValuesSupplier, totalLiveDocs);
+            //profilerWriter.flushIndex(knnVectorValuesSupplier, totalLiveDocs);
             long time_in_millis = stopWatch.stop().totalTime().millis();
             KNNGraphValue.REFRESH_TOTAL_TIME_IN_MILLIS.incrementBy(time_in_millis);
             log.debug("Flush took {} ms for vector field [{}]", time_in_millis, fieldInfo.getName());
@@ -154,10 +169,10 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         final QuantizationState quantizationState = train(fieldInfo, knnVectorValuesSupplier, totalLiveDocs);
 
         // Write the segment profile state to the directory
-        profile(fieldInfo, knnVectorValuesSupplier, totalLiveDocs);
+        final SegmentProfilerState segmentProfilerState = profile(fieldInfo, knnVectorValuesSupplier, totalLiveDocs);
 
         // should skip graph building only for non quantization use case and if threshold is met
-        if (quantizationState == null && shouldSkipBuildingVectorDataStructure(totalLiveDocs)) {
+        if ((quantizationState == null || segmentProfilerState == null) && shouldSkipBuildingVectorDataStructure(totalLiveDocs)) {
             log.info(
                 "Skip building vector data structure for field: {}, as liveDoc: {} is less than the threshold {} during merge",
                 fieldInfo.name,
@@ -173,9 +188,17 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
             nativeIndexBuildStrategyFactory
         );
 
+        final NativeIndexWriter profilerWriter = NativeIndexWriter.getProfilerWriter(
+                fieldInfo,
+                segmentWriteState,
+                segmentProfilerState,
+                nativeIndexBuildStrategyFactory
+        );
+
         StopWatch stopWatch = new StopWatch().start();
 
         writer.mergeIndex(knnVectorValuesSupplier, totalLiveDocs);
+        //profilerWriter.mergeIndex(knnVectorValuesSupplier, totalLiveDocs);
 
         long time_in_millis = stopWatch.stop().totalTime().millis();
         KNNGraphValue.MERGE_TOTAL_TIME_IN_MILLIS.incrementBy(time_in_millis);
@@ -193,6 +216,9 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         finished = true;
         if (quantizationStateWriter != null) {
             quantizationStateWriter.writeFooter();
+        }
+        if (segmentProfilerStateWriter != null) {
+            segmentProfilerStateWriter.writeFooter();
         }
 
         flatVectorsWriter.finish();
@@ -216,6 +242,9 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         if (quantizationStateWriter != null) {
             quantizationStateWriter.closeOutput();
         }
+        if (segmentProfilerStateWriter != null) {
+            segmentProfilerStateWriter.closeOutput();
+        }
         IOUtils.close(flatVectorsWriter);
     }
 
@@ -238,11 +267,15 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         final QuantizationService quantizationService = QuantizationService.getInstance();
         final QuantizationParams quantizationParams = quantizationService.getQuantizationParams(fieldInfo);
         QuantizationState quantizationState = null;
+        //SegmentProfilerState segmentProfilerState = null;
         if (quantizationParams != null && totalLiveDocs > 0) {
             initQuantizationStateWriterIfNecessary();
+            //initSegmentStateWriterIfNecessary();
             KNNVectorValues<?> knnVectorValues = knnVectorValuesSupplier.get();
             quantizationState = quantizationService.train(quantizationParams, knnVectorValues, totalLiveDocs);
+            //segmentProfilerState = segmentService.train(segmentParams, knnVectorValues, totalLiveDocs);
             quantizationStateWriter.writeState(fieldInfo.getFieldNumber(), quantizationState);
+            //segmentProfilerStateWriter.writeState(fieldInfo.getFieldNumber(), segmentProfilerState);
         }
 
         return quantizationState;
@@ -254,12 +287,16 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         final int totalLiveDocs
     ) throws IOException {
 
+        //SegmentProfilerState segmentProfilerState = null;
         SegmentProfilerState segmentProfilerState = null;
         if (totalLiveDocs > 0) {
             // TODO:Refactor to another init
-            initQuantizationStateWriterIfNecessary();
-            SegmentProfilerState profileResultForSegment = SegmentProfilerState.profileVectors(knnVectorValuesSupplier);
-            quantizationStateWriter.writeState(fieldInfo.getFieldNumber(), profileResultForSegment);
+            //initQuantizationStateWriterIfNecessary();
+            initSegmentStateWriterIfNecessary();
+            segmentProfilerState = SegmentProfilerState.profileVectors(knnVectorValuesSupplier);
+            //quantizationStateWriter.writeState(fieldInfo.getFieldNumber(), profileResultForSegment);
+            segmentProfilerStateWriter.writeState(fieldInfo.getFieldNumber(), segmentProfilerState);
+
         }
 
         return segmentProfilerState;
@@ -287,6 +324,12 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         }
     }
 
+    private void initSegmentStateWriterIfNecessary() throws IOException {
+        if (segmentProfilerStateWriter == null) {
+            segmentProfilerStateWriter = new KNN990ProfileStateWriter(segmentWriteState);
+            segmentProfilerStateWriter.writeHeader(segmentWriteState);
+        }
+    }
     private boolean shouldSkipBuildingVectorDataStructure(final long docCount) {
         if (approximateThreshold < 0) {
             return true;

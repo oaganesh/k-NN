@@ -9,8 +9,12 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.extern.log4j.Log4j2;
 import org.apache.commons.math3.stat.descriptive.SummaryStatistics;
+import org.opensearch.common.io.stream.BytesStreamOutput;
+import org.opensearch.core.common.io.stream.StreamInput;
 import org.opensearch.knn.index.codec.util.KNNCodecUtil;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
+import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
+//import org.opensearch.knn.quantization.models.quantizationState.QuantizationStateSerializer;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -147,7 +151,6 @@ public class SegmentProfilerState implements Serializable {
      */
     public byte[] toByteArray() {
         try (ByteArrayOutputStream baos = new ByteArrayOutputStream(); ObjectOutputStream oos = new ObjectOutputStream(baos)) {
-
             oos.writeObject(this);
             return baos.toByteArray();
         } catch (IOException e) {
@@ -155,17 +158,46 @@ public class SegmentProfilerState implements Serializable {
         }
     }
 
+//    public byte[] toByteArray() throws IOException {
+//        try (BytesStreamOutput out = new BytesStreamOutput()) {
+//            out.writeTo(this);
+//            return out.bytes().toBytesRef().bytes;
+//        }
+//    }
+
     /**
      * Deserializes a SegmentProfilerState from a byte array
      * @param bytes
      * @return
      */
     public static SegmentProfilerState fromBytes(byte[] bytes) {
-        try (ByteArrayInputStream bais = new ByteArrayInputStream(bytes); ObjectInputStream ois = new ObjectInputStream(bais)) {
+        try (StreamInput bais = StreamInput.wrap(bytes); ObjectInputStream ois = new ObjectInputStream(bais)) {
 
             return (SegmentProfilerState) ois.readObject();
         } catch (IOException | ClassNotFoundException e) {
             throw new RuntimeException("Failed to deserialize SegmentProfilerState", e);
         }
     }
+
+
+//    static byte[] serialize(QuantizationState state) throws IOException {
+//        try (BytesStreamOutput out = new BytesStreamOutput()) {
+//            state.writeTo(out);
+//            return out.bytes().toBytesRef().bytes;
+//        }
+//    }
+//
+//    /**
+//     * Deserializes a QuantizationState and its specific data from a byte array.
+//     *
+//     * @param bytes                    The byte array containing the serialized data.
+//     * @param deserializer             The deserializer for the specific data associated with the state.
+//     * @return The deserialized QuantizationState including its specific data.
+//     * @throws IOException            If an I/O error occurs during deserialization.
+//     */
+//    static QuantizationState deserialize(byte[] bytes, QuantizationStateSerializer.SerializableDeserializer deserializer) throws IOException {
+//        try (StreamInput in = StreamInput.wrap(bytes)) {
+//            return deserializer.deserialize(in);
+//        }
+//    }
 }

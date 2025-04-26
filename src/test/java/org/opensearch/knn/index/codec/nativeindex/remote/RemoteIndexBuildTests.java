@@ -40,6 +40,7 @@ import org.opensearch.knn.index.store.IndexOutputWithBuffer;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValuesFactory;
 import org.opensearch.knn.index.vectorvalues.TestVectorValues;
+import org.opensearch.knn.profiler.SegmentBuildIndexParams;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -108,6 +109,11 @@ abstract class RemoteIndexBuildTests extends KNNTestCase {
         public void buildAndWriteIndex(BuildIndexParams indexInfo) throws IOException {
             fallback.set(true);
         }
+
+//        @Override
+//        public void buildAndWriteSegmentIndex(SegmentBuildIndexParams indexInfo) throws IOException {
+//            fallback.set(true);
+//        }
     }
 
     static class TestAsyncBlobContainer extends FsBlobContainer implements AsyncMultiStreamBlobContainer {

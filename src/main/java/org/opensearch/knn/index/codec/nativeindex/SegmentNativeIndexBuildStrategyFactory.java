@@ -27,18 +27,18 @@ import static org.opensearch.knn.index.codec.util.KNNCodecUtil.initializeVectorV
 /**
  * Creates the {@link NativeIndexBuildStrategy}
  */
-public final class NativeIndexBuildStrategyFactory {
+public final class SegmentNativeIndexBuildStrategyFactory {
 
     private final Supplier<RepositoriesService> repositoriesServiceSupplier;
     private final IndexSettings indexSettings;
     @Setter
     private KNNLibraryIndexingContext knnLibraryIndexingContext;
 
-    public NativeIndexBuildStrategyFactory() {
+    public SegmentNativeIndexBuildStrategyFactory() {
         this(null, null);
     }
 
-    public NativeIndexBuildStrategyFactory(Supplier<RepositoriesService> repositoriesServiceSupplier, IndexSettings indexSettings) {
+    public SegmentNativeIndexBuildStrategyFactory(Supplier<RepositoriesService> repositoriesServiceSupplier, IndexSettings indexSettings) {
         this.repositoriesServiceSupplier = repositoriesServiceSupplier;
         this.indexSettings = indexSettings;
     }
@@ -52,56 +52,32 @@ public final class NativeIndexBuildStrategyFactory {
      * @return The {@link NativeIndexBuildStrategy} to be used. Intended to be used by {@link NativeIndexWriter}
      * @throws IOException
      */
-    public NativeIndexBuildStrategy getBuildStrategy(
+
+public NativeIndexBuildStrategy getSegmentBuildStrategy(
         final FieldInfo fieldInfo,
         final int totalLiveDocs,
         final KNNVectorValues<?> knnVectorValues,
-        BuildIndexParams indexInfo
-    ) throws IOException {
-        final KNNEngine knnEngine = extractKNNEngine(fieldInfo);
-        boolean isTemplate = fieldInfo.attributes().containsKey(MODEL_ID);
-        boolean iterative = !isTemplate && KNNEngine.FAISS == knnEngine;
+        SegmentBuildIndexParams indexInfo
+) throws IOException {
+    final KNNEngine knnEngine = extractKNNEngine(fieldInfo);
+    boolean isTemplate = fieldInfo.attributes().containsKey(MODEL_ID);
+    boolean iterative = !isTemplate && KNNEngine.FAISS == knnEngine;
 
-        NativeIndexBuildStrategy strategy = iterative
+    NativeIndexBuildStrategy strategy = iterative
             ? MemOptimizedNativeIndexBuildStrategy.getInstance()
             : DefaultIndexBuildStrategy.getInstance();
 
-        initializeVectorValues(knnVectorValues);
-        long vectorBlobLength = ((long) knnVectorValues.bytesPerVector()) * totalLiveDocs;
+    initializeVectorValues(knnVectorValues);
+    long vectorBlobLength = ((long) knnVectorValues.bytesPerVector()) * totalLiveDocs;
 
-        if (KNNFeatureFlags.isKNNRemoteVectorBuildEnabled()
+    if (KNNFeatureFlags.isKNNRemoteVectorBuildEnabled()
             && repositoriesServiceSupplier != null
             && indexSettings != null
             && knnEngine.supportsRemoteIndexBuild(knnLibraryIndexingContext)
             && RemoteIndexBuildStrategy.shouldBuildIndexRemotely(indexSettings, vectorBlobLength)) {
-            return new RemoteIndexBuildStrategy(repositoriesServiceSupplier, strategy, indexSettings, knnLibraryIndexingContext);
-        } else {
-            return strategy;
-        }
+        return new RemoteIndexBuildStrategy(repositoriesServiceSupplier, strategy, indexSettings, knnLibraryIndexingContext);
+    } else {
+        return strategy;
     }
-
-
-    public NativeIndexBuildStrategy getSegmentBuildStrategy(FieldInfo fieldInfo, int totalLiveDocs, KNNVectorValues<?> knnVectorValues, SegmentBuildIndexParams segmentNativeIndexParams) throws IOException {
-
-            final KNNEngine knnEngine = extractKNNEngine(fieldInfo);
-            boolean isTemplate = fieldInfo.attributes().containsKey(MODEL_ID);
-            boolean iterative = !isTemplate && KNNEngine.FAISS == knnEngine;
-
-            NativeIndexBuildStrategy strategy = iterative
-                    ? MemOptimizedNativeIndexBuildStrategy.getInstance()
-                    : DefaultIndexBuildStrategy.getInstance();
-
-            initializeVectorValues(knnVectorValues);
-            long vectorBlobLength = ((long) knnVectorValues.bytesPerVector()) * totalLiveDocs;
-
-            if (KNNFeatureFlags.isKNNRemoteVectorBuildEnabled()
-                    && repositoriesServiceSupplier != null
-                    && indexSettings != null
-                    && knnEngine.supportsRemoteIndexBuild(knnLibraryIndexingContext)
-                    && RemoteIndexBuildStrategy.shouldBuildIndexRemotely(indexSettings, vectorBlobLength)) {
-                return new RemoteIndexBuildStrategy(repositoriesServiceSupplier, strategy, indexSettings, knnLibraryIndexingContext);
-            } else {
-                return strategy;
-            }
     }
 }

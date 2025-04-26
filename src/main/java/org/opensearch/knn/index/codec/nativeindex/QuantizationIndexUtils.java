@@ -9,6 +9,8 @@ import lombok.experimental.UtilityClass;
 import org.opensearch.knn.index.codec.nativeindex.model.BuildIndexParams;
 import org.opensearch.knn.index.quantizationservice.QuantizationService;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
+import org.opensearch.knn.profiler.SegmentBuildIndexParams;
+import org.opensearch.knn.profiler.SegmentProfilerState;
 import org.opensearch.knn.quantization.models.quantizationOutput.QuantizationOutput;
 import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
 
@@ -69,4 +71,24 @@ class QuantizationIndexUtils {
 
         return new IndexBuildSetup(bytesPerVector, dimensions, quantizationOutput, quantizationState);
     }
+
+//    static IndexBuildSetup prepareSegmentIndexBuild(KNNVectorValues<?> knnVectorValues, SegmentBuildIndexParams indexInfo) {
+//        SegmentProfilerState segmentProfilerState = indexInfo.getSegmentProfilerState();
+//        QuantizationOutput quantizationOutput = null;
+//        QuantizationService quantizationService = QuantizationService.getInstance();
+//
+//        int bytesPerVector;
+//        int dimensions;
+//
+//        if (segmentProfilerState != null) {
+//            bytesPerVector = segmentProfilerState.getBytesPerVector();
+//            dimensions = segmentProfilerState.getDimensions();
+//            quantizationOutput = quantizationService.createQuantizationOutput(segmentProfilerState.getQuantizationParams());
+//        } else {
+//            bytesPerVector = knnVectorValues.bytesPerVector();
+//            dimensions = knnVectorValues.dimension();
+//        }
+//
+//        return new IndexBuildSetup(bytesPerVector, dimensions, quantizationOutput, segmentProfilerState);
+//    }
 }

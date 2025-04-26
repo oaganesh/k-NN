@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.KNN990Codec;
+package org.opensearch.knn.profiler;
 
 import lombok.AllArgsConstructor;
 import lombok.Setter;
@@ -20,13 +20,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Writes quantization states to off heap memory
+ * Writes segment states to off heap memory
  */
-public final class KNN990QuantizationStateWriter {
+public final class KNN990ProfileStateWriter {
 
     private final IndexOutput output;
-    private List<FieldQuantizationState> fieldQuantizationStates = new ArrayList<>();
-    static final String NATIVE_ENGINES_990_KNN_VECTORS_FORMAT_QS_DATA = "NativeEngines990KnnVectorsFormatQSData";
+    private List<FieldSegmentState> fieldSegmentStates = new ArrayList<>();
+    static final String NATIVE_ENGINES_990_KNN_VECTORS_FORMAT_SS_DATA = "NativeEngines990KnnVectorsFormatSSData";
 
     /**
      * Constructor
@@ -34,7 +34,7 @@ public final class KNN990QuantizationStateWriter {
      * Header
      * QS1 state bytes
      * QS2 state bytes
-     * Number of quantization states
+     * Number of segment states
      * QS1 field number
      * QS1 state bytes length
      * QS1 position of state bytes
@@ -47,14 +47,14 @@ public final class KNN990QuantizationStateWriter {
      * @param segmentWriteState segment write state containing segment information
      * @throws IOException exception could be thrown while creating the output
      */
-    public KNN990QuantizationStateWriter(SegmentWriteState segmentWriteState) throws IOException {
-        String quantizationStateFileName = IndexFileNames.segmentFileName(
-            segmentWriteState.segmentInfo.name,
-            segmentWriteState.segmentSuffix,
-            KNNConstants.QUANTIZATION_STATE_FILE_SUFFIX
+    public KNN990ProfileStateWriter(SegmentWriteState segmentWriteState) throws IOException {
+        String segmentStateFileName = IndexFileNames.segmentFileName(
+                segmentWriteState.segmentInfo.name,
+                segmentWriteState.segmentSuffix,
+                KNNConstants.SEGMENT_PROFILE_STATE_FILE_SUFFIX
         );
 
-        output = segmentWriteState.directory.createOutput(quantizationStateFileName, segmentWriteState.context);
+        output = segmentWriteState.directory.createOutput(segmentStateFileName, segmentWriteState.context);
     }
 
     /**
@@ -64,26 +64,12 @@ public final class KNN990QuantizationStateWriter {
      */
     public void writeHeader(SegmentWriteState segmentWriteState) throws IOException {
         CodecUtil.writeIndexHeader(
-            output,
-            NATIVE_ENGINES_990_KNN_VECTORS_FORMAT_QS_DATA,
-            0,
-            segmentWriteState.segmentInfo.getId(),
-            segmentWriteState.segmentSuffix
+                output,
+                NATIVE_ENGINES_990_KNN_VECTORS_FORMAT_SS_DATA,
+                0,
+                segmentWriteState.segmentInfo.getId(),
+                segmentWriteState.segmentSuffix
         );
-    }
-
-    /**
-     * Writes a quantization state as bytes
-     *
-     * @param fieldNumber field number
-     * @param quantizationState quantization state
-     * @throws IOException could be thrown while writing
-     */
-    public void writeState(int fieldNumber, QuantizationState quantizationState) throws IOException {
-        byte[] stateBytes = quantizationState.toByteArray();
-        long position = output.getFilePointer();
-        output.writeBytes(stateBytes, stateBytes.length);
-        fieldQuantizationStates.add(new FieldQuantizationState(fieldNumber, stateBytes, position));
     }
 
     /**
@@ -93,12 +79,12 @@ public final class KNN990QuantizationStateWriter {
      * @param segmentProfilerState segment profiler state
      * @throws IOException could be thrown while writing
      */
-//    public void writeState(int fieldNumber, SegmentProfilerState segmentProfilerState) throws IOException {
-//        byte[] stateBytes = segmentProfilerState.toByteArray();
-//        long position = output.getFilePointer();
-//        output.writeBytes(stateBytes, stateBytes.length);
-//        fieldQuantizationStates.add(new FieldQuantizationState(fieldNumber, stateBytes, position));
-//    }
+    public void writeState(int fieldNumber, SegmentProfilerState segmentProfilerState) throws IOException {
+        byte[] stateBytes = segmentProfilerState.toByteArray();
+        long position = output.getFilePointer();
+        output.writeBytes(stateBytes, stateBytes.length);
+        fieldSegmentStates.add(new FieldSegmentState(fieldNumber, stateBytes, position));
+    }
 
     /**
      * Writes index footer and other index information for parsing later
@@ -106,11 +92,11 @@ public final class KNN990QuantizationStateWriter {
      */
     public void writeFooter() throws IOException {
         long indexStartPosition = output.getFilePointer();
-        output.writeInt(fieldQuantizationStates.size());
-        for (FieldQuantizationState fieldQuantizationState : fieldQuantizationStates) {
-            output.writeInt(fieldQuantizationState.fieldNumber);
-            output.writeInt(fieldQuantizationState.stateBytes.length);
-            output.writeVLong(fieldQuantizationState.position);
+        output.writeInt(fieldSegmentStates.size());
+        for (FieldSegmentState fieldSegmentState : fieldSegmentStates) {
+            output.writeInt(fieldSegmentState.fieldNumber);
+            output.writeInt(fieldSegmentState.stateBytes.length);
+            output.writeVLong(fieldSegmentState.position);
         }
         output.writeLong(indexStartPosition);
         output.writeInt(-1);
@@ -118,7 +104,7 @@ public final class KNN990QuantizationStateWriter {
     }
 
     @AllArgsConstructor
-    private static class FieldQuantizationState {
+    private static class FieldSegmentState {
         final int fieldNumber;
         final byte[] stateBytes;
         @Setter

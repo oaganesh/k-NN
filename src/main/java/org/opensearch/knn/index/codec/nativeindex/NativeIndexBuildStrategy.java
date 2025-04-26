@@ -6,6 +6,7 @@
 package org.opensearch.knn.index.codec.nativeindex;
 
 import org.opensearch.knn.index.codec.nativeindex.model.BuildIndexParams;
+import org.opensearch.knn.profiler.SegmentBuildIndexParams;
 
 import java.io.IOException;
 
@@ -15,4 +16,7 @@ import java.io.IOException;
 public interface NativeIndexBuildStrategy {
 
     void buildAndWriteIndex(BuildIndexParams indexInfo) throws IOException;
+
+    //void buildAndWriteSegmentIndex(SegmentBuildIndexParams segmentNativeIndexParams);
+    // void buildAndWriteSegmentIndex(SegmentBuildIndexParams indexInfo) throws IOException;
 }

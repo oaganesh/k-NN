@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package org.opensearch.knn.index.codec.nativeindex;
+package org.opensearch.knn.profiler;
 
 import lombok.AllArgsConstructor;
 import lombok.extern.log4j.Log4j2;
@@ -22,7 +22,10 @@ import org.opensearch.knn.common.KNNConstants;
 import org.opensearch.knn.index.KNNSettings;
 import org.opensearch.knn.index.SpaceType;
 import org.opensearch.knn.index.VectorDataType;
-import org.opensearch.knn.index.codec.nativeindex.model.BuildIndexParams;
+import org.opensearch.knn.index.codec.nativeindex.NativeIndexBuildStrategy;
+import org.opensearch.knn.index.codec.nativeindex.NativeIndexBuildStrategyFactory;
+import org.opensearch.knn.index.codec.nativeindex.SegmentNativeIndexBuildStrategy;
+import org.opensearch.knn.index.codec.nativeindex.SegmentNativeIndexBuildStrategyFactory;
 import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.engine.qframe.QuantizationConfig;
 import org.opensearch.knn.index.quantizationservice.QuantizationService;
@@ -32,8 +35,6 @@ import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
 import org.opensearch.knn.indices.Model;
 import org.opensearch.knn.indices.ModelCache;
 import org.opensearch.knn.plugin.stats.KNNGraphValue;
-import org.opensearch.knn.profiler.SegmentProfilerState;
-import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -54,14 +55,12 @@ import static org.opensearch.knn.index.engine.faiss.Faiss.FAISS_BINARY_INDEX_DES
  */
 @AllArgsConstructor
 @Log4j2
-public class NativeIndexWriter {
+public class SegmentNativeIndexWriter {
     private static final Long CRC32_CHECKSUM_SANITY = 0xFFFFFFFF00000000L;
 
     private final SegmentWriteState state;
     private final FieldInfo fieldInfo;
     private final NativeIndexBuildStrategyFactory indexBuilderFactory;
-    @Nullable
-    private final QuantizationState quantizationState;
     @Nullable
     private final SegmentProfilerState segmentProfilerState;
 
@@ -71,40 +70,31 @@ public class NativeIndexWriter {
      * @param fieldInfo
      * @return correct NativeIndexWriter to make index specified in fieldInfo
      */
-    public static NativeIndexWriter getWriter(final FieldInfo fieldInfo, SegmentWriteState state) {
+    public static SegmentNativeIndexWriter getWriter(final FieldInfo fieldInfo, SegmentWriteState state) {
         return createWriter(fieldInfo, state, null, new NativeIndexBuildStrategyFactory());
     }
 
     /**
      * Gets the correct writer type for the specified field, using a given QuantizationModel.
-     *
+     * <p>
      * This method returns a NativeIndexWriter instance that is tailored to the specific characteristics
      * of the field described by the provided FieldInfo. It determines whether to use a template-based
      * writer or an iterative approach based on the engine type and whether the field is associated with a template.
-     *
+     * <p>
      * If quantization is required, the QuantizationModel is passed to the writer to facilitate the quantization process.
      *
-     * @param fieldInfo          The FieldInfo object containing metadata about the field for which the writer is needed.
-     * @param state              The SegmentWriteState representing the current segment's writing context.
-     * @param quantizationState  The QuantizationState that contains  quantization state required for quantization
-     * @return                   A NativeIndexWriter instance appropriate for the specified field, configured with or without quantization.
+     * @param fieldInfo            The FieldInfo object containing metadata about the field for which the writer is needed.
+     * @param state                The SegmentWriteState representing the current segment's writing context.
+     * @param segmentProfilerState The QuantizationState that contains  quantization state required for quantization
+     * @return A NativeIndexWriter instance appropriate for the specified field, configured with or without quantization.
      */
-    public static NativeIndexWriter getWriter(
-        final FieldInfo fieldInfo,
-        final SegmentWriteState state,
-        final QuantizationState quantizationState,
-        final NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory
-    ) {
-        return createWriter(fieldInfo, state, quantizationState, nativeIndexBuildStrategyFactory);
-    }
-
-    public static NativeIndexWriter getProfilerWriter(
+    public static SegmentNativeIndexWriter getWriter(
             final FieldInfo fieldInfo,
             final SegmentWriteState state,
             final SegmentProfilerState segmentProfilerState,
             final NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory
     ) {
-        return createProfilerWriter(fieldInfo, state, segmentProfilerState, nativeIndexBuildStrategyFactory);
+        return createWriter(fieldInfo, state, segmentProfilerState, nativeIndexBuildStrategyFactory);
     }
 
     /**
@@ -114,7 +104,7 @@ public class NativeIndexWriter {
      * @throws IOException
      */
     public void flushIndex(final Supplier<KNNVectorValues<?>> knnVectorValuesSupplier, int totalLiveDocs) throws IOException {
-        buildAndWriteIndex(knnVectorValuesSupplier, totalLiveDocs, true);
+        buildAndWriteSegmentIndex(knnVectorValuesSupplier, totalLiveDocs, true);
         recordRefreshStats();
     }
 
@@ -134,12 +124,12 @@ public class NativeIndexWriter {
 
         long bytesPerVector = knnVectorValues.bytesPerVector();
         startMergeStats(totalLiveDocs, bytesPerVector);
-        buildAndWriteIndex(knnVectorValuesSupplier, totalLiveDocs, false);
+        buildAndWriteSegmentIndex(knnVectorValuesSupplier, totalLiveDocs, false);
         endMergeStats(totalLiveDocs, bytesPerVector);
     }
 
-    private void buildAndWriteIndex(final Supplier<KNNVectorValues<?>> knnVectorValuesSupplier, int totalLiveDocs, boolean isFlush)
-        throws IOException {
+    private void buildAndWriteSegmentIndex(final Supplier<KNNVectorValues<?>> knnVectorValuesSupplier, int totalLiveDocs, boolean isFlush)
+            throws IOException {
         if (totalLiveDocs == 0) {
             log.debug("No live docs for field {}", fieldInfo.name);
             return;
@@ -147,28 +137,28 @@ public class NativeIndexWriter {
 
         final KNNEngine knnEngine = extractKNNEngine(fieldInfo);
         final String engineFileName = buildEngineFileName(
-            state.segmentInfo.name,
-            knnEngine.getVersion(),
-            fieldInfo.name,
-            knnEngine.getExtension()
+                state.segmentInfo.name,
+                knnEngine.getVersion(),
+                fieldInfo.name,
+                knnEngine.getExtension()
         );
         try (IndexOutput output = state.directory.createOutput(engineFileName, state.context)) {
             final IndexOutputWithBuffer indexOutputWithBuffer = new IndexOutputWithBuffer(output);
-            final BuildIndexParams nativeIndexParams = indexParams(
-                fieldInfo,
-                indexOutputWithBuffer,
-                knnEngine,
-                knnVectorValuesSupplier,
-                totalLiveDocs,
-                isFlush
+            final SegmentBuildIndexParams segmentNativeIndexParams = indexParams(
+                    fieldInfo,
+                    indexOutputWithBuffer,
+                    knnEngine,
+                    knnVectorValuesSupplier,
+                    totalLiveDocs,
+                    isFlush
             );
-            NativeIndexBuildStrategy indexBuilder = indexBuilderFactory.getBuildStrategy(
-                fieldInfo,
-                totalLiveDocs,
-                knnVectorValuesSupplier.get(),
-                nativeIndexParams
+            SegmentNativeIndexBuildStrategy indexBuilder = (SegmentNativeIndexBuildStrategy) indexBuilderFactory.getSegmentBuildStrategy(
+                    fieldInfo,
+                    totalLiveDocs,
+                    knnVectorValuesSupplier.get(),
+                    segmentNativeIndexParams
             );
-            indexBuilder.buildAndWriteIndex(nativeIndexParams);
+            indexBuilder.buildAndWriteSegmentIndex(segmentNativeIndexParams);
             CodecUtil.writeFooter(output);
         }
     }
@@ -176,17 +166,17 @@ public class NativeIndexWriter {
     // The logic for building parameters need to be cleaned up. There are various cases handled here
     // Currently it falls under two categories - with model and without model. Without model is further divided based on vector data type
     // TODO: Refactor this so its scalable. Possibly move it out of this class
-    private BuildIndexParams indexParams(
-        FieldInfo fieldInfo,
-        IndexOutputWithBuffer indexOutputWithBuffer,
-        KNNEngine knnEngine,
-        Supplier<KNNVectorValues<?>> knnVectorValuesSupplier,
-        int totalLiveDocs,
-        boolean isFlush
+    private SegmentBuildIndexParams indexParams(
+            FieldInfo fieldInfo,
+            IndexOutputWithBuffer indexOutputWithBuffer,
+            KNNEngine knnEngine,
+            Supplier<KNNVectorValues<?>> knnVectorValuesSupplier,
+            int totalLiveDocs,
+            boolean isFlush
     ) throws IOException {
         final Map<String, Object> parameters;
         VectorDataType vectorDataType;
-        if (quantizationState != null) {
+        if (segmentProfilerState != null) {
             vectorDataType = QuantizationService.getInstance().getVectorDataTypeForTransfer(fieldInfo);
         } else {
             vectorDataType = extractVectorDataType(fieldInfo);
@@ -198,18 +188,18 @@ public class NativeIndexWriter {
             parameters = getParameters(fieldInfo, vectorDataType, knnEngine);
         }
 
-        return BuildIndexParams.builder()
-            .fieldName(fieldInfo.name)
-            .parameters(parameters)
-            .vectorDataType(vectorDataType)
-            .knnEngine(knnEngine)
-            .indexOutputWithBuffer(indexOutputWithBuffer)
-            .quantizationState(quantizationState)
-            .knnVectorValuesSupplier(knnVectorValuesSupplier)
-            .totalLiveDocs(totalLiveDocs)
-            .segmentWriteState(state)
-            .isFlush(isFlush)
-            .build();
+        return SegmentBuildIndexParams.builder()
+                .fieldName(fieldInfo.name)
+                .parameters(parameters)
+                .vectorDataType(vectorDataType)
+                .knnEngine(knnEngine)
+                .indexOutputWithBuffer(indexOutputWithBuffer)
+                .segmentProfilerState(segmentProfilerState)
+                .knnVectorValuesSupplier(knnVectorValuesSupplier)
+                .totalLiveDocs(totalLiveDocs)
+                .segmentWriteState(state)
+                .isFlush(isFlush)
+                .build();
     }
 
     private Map<String, Object> getParameters(FieldInfo fieldInfo, VectorDataType vectorDataType, KNNEngine knnEngine) throws IOException {
@@ -234,12 +224,12 @@ public class NativeIndexWriter {
             parameters.put(PARAMETERS, algoParams);
         } else {
             parameters.putAll(
-                XContentHelper.createParser(
-                    NamedXContentRegistry.EMPTY,
-                    DeprecationHandler.THROW_UNSUPPORTED_OPERATION,
-                    new BytesArray(parametersString),
-                    MediaTypeRegistry.getDefaultMediaType()
-                ).map()
+                    XContentHelper.createParser(
+                            NamedXContentRegistry.EMPTY,
+                            DeprecationHandler.THROW_UNSUPPORTED_OPERATION,
+                            new BytesArray(parametersString),
+                            MediaTypeRegistry.getDefaultMediaType()
+                    ).map()
             );
         }
 
@@ -262,7 +252,7 @@ public class NativeIndexWriter {
         }
 
         if (!VectorDataType.BINARY.getValue()
-            .equals(fieldAttributes.getOrDefault(KNNConstants.VECTOR_DATA_TYPE_FIELD, VectorDataType.DEFAULT.getValue()))) {
+                .equals(fieldAttributes.getOrDefault(KNNConstants.VECTOR_DATA_TYPE_FIELD, VectorDataType.DEFAULT.getValue()))) {
             return;
         }
 
@@ -275,8 +265,8 @@ public class NativeIndexWriter {
         }
 
         parameters.put(
-            KNNConstants.INDEX_DESCRIPTION_PARAMETER,
-            FAISS_BINARY_INDEX_DESCRIPTION_PREFIX + parameters.get(KNNConstants.INDEX_DESCRIPTION_PARAMETER).toString()
+                KNNConstants.INDEX_DESCRIPTION_PARAMETER,
+                FAISS_BINARY_INDEX_DESCRIPTION_PREFIX + parameters.get(KNNConstants.INDEX_DESCRIPTION_PARAMETER).toString()
         );
         IndexUtil.updateVectorDataTypeToParameters(parameters, VectorDataType.BINARY);
     }
@@ -328,25 +318,16 @@ public class NativeIndexWriter {
      *
      * @param fieldInfo          The FieldInfo object containing metadata about the field for which the writer is needed.
      * @param state              The SegmentWriteState representing the current segment's writing context.
-     * @param quantizationState  The QuantizationState that contains quantization state required for quantization, can be null.
+     * @param segmentProfilerState  The QuantizationState that contains quantization state required for quantization, can be null.
      * @param nativeIndexBuildStrategyFactory The factory which will return the correct {@link NativeIndexBuildStrategy} implementation
      * @return                   A NativeIndexWriter instance appropriate for the specified field, configured with or without quantization.
      */
-    private static NativeIndexWriter createWriter(
-        final FieldInfo fieldInfo,
-        final SegmentWriteState state,
-        @Nullable final QuantizationState quantizationState,
-        NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory
-    ) {
-        return new NativeIndexWriter(state, fieldInfo, nativeIndexBuildStrategyFactory, quantizationState, null);
-    }
-
-    private static NativeIndexWriter createProfilerWriter(
+    private static SegmentNativeIndexWriter createWriter(
             final FieldInfo fieldInfo,
             final SegmentWriteState state,
             @Nullable final SegmentProfilerState segmentProfilerState,
             NativeIndexBuildStrategyFactory nativeIndexBuildStrategyFactory
     ) {
-        return new NativeIndexWriter(state, fieldInfo, nativeIndexBuildStrategyFactory, null, segmentProfilerState);
+        return new SegmentNativeIndexWriter(state, fieldInfo, nativeIndexBuildStrategyFactory, segmentProfilerState);
     }
 }

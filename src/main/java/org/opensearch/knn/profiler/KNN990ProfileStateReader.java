@@ -57,11 +57,14 @@ public final class KNN990ProfileStateReader {
             if (position == -1 || length == 0) {
                 throw new IllegalArgumentException(String.format("Field %s not found", field));
             }
+            boolean isCompressed = false;
 
             byte[] stateBytes = readStateBytes(input, position, length);
             return SegmentProfilerState.fromBytes(stateBytes);
         }
     }
+
+
 
     @VisibleForTesting
     static int getNumFields(IndexInput input) throws IOException {
@@ -83,6 +86,6 @@ public final class KNN990ProfileStateReader {
 
     @VisibleForTesting
     static String getQuantizationStateFileName(SegmentReadState state) {
-        return IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, KNNConstants.QUANTIZATION_STATE_FILE_SUFFIX);
+        return IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, KNNConstants.SEGMENT_PROFILE_STATE_FILE_SUFFIX);
     }
 }
