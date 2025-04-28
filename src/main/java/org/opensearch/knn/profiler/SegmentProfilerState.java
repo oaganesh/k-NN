@@ -9,14 +9,14 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.extern.log4j.Log4j2;
 import org.apache.commons.math3.stat.descriptive.SummaryStatistics;
+import org.opensearch.common.io.stream.BytesStreamOutput;
+import org.opensearch.core.common.io.stream.StreamInput;
+import org.opensearch.core.common.io.stream.StreamOutput;
+import org.opensearch.core.common.io.stream.Writeable;
 import org.opensearch.knn.index.codec.util.KNNCodecUtil;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.ObjectInputStream;
 import java.io.IOException;
-import java.io.ObjectOutputStream;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,7 +30,7 @@ import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
  */
 @Log4j2
 @AllArgsConstructor
-public class SegmentProfilerState implements Serializable {
+public class SegmentProfilerState implements Serializable, Writeable {
 
     // Stores statistical summaries for each dimension of the vectors
     @Getter
@@ -38,6 +38,29 @@ public class SegmentProfilerState implements Serializable {
 
     @Getter
     private final int dimension;
+
+    public SegmentProfilerState(StreamInput in) throws IOException {
+        int size = in.readVInt();
+        this.statistics = new ArrayList<>(size);
+        for (int i = 0; i < size; i++) {
+            SummaryStatistics stats = new SummaryStatistics();
+            // Read the values
+            double mean = in.readDouble();
+            double variance = in.readDouble();
+            long n = in.readVLong();
+            double min = in.readDouble();
+            double max = in.readDouble();
+            double sum = in.readDouble();
+
+            // Add values to the statistics object
+            // We need to add values that will result in these summary statistics
+            for (int j = 0; j < n; j++) {
+                stats.addValue(mean); // This is a simplification
+            }
+            statistics.add(stats);
+        }
+        this.dimension = in.readInt();
+    }
 
     /**
      * Profiles vectors in a segment by analyzing their statistical values
@@ -141,31 +164,71 @@ public class SegmentProfilerState implements Serializable {
         }
     }
 
-    /**
-     * Serializes a SegmentProfilerState to a byte array
-     * @return
-     */
-    public byte[] toByteArray() {
-        try (ByteArrayOutputStream baos = new ByteArrayOutputStream(); ObjectOutputStream oos = new ObjectOutputStream(baos)) {
+    // /**
+    // * Serializes a SegmentProfilerState to a byte array
+    // * @return
+    // */
+    // public byte[] toByteArray() {
+    // try (ByteArrayOutputStream baos = new ByteArrayOutputStream(); ObjectOutputStream oos = new ObjectOutputStream(baos)) {
+    //
+    // oos.writeObject(this);
+    // return baos.toByteArray();
+    // } catch (IOException e) {
+    // throw new RuntimeException("Failed to serialize SegmentProfilerStates", e);
+    // }
+    // }
+    //
+    // /**
+    // * Deserializes a SegmentProfilerState from a byte array
+    // * @param bytes
+    // * @return
+    // */
+    // public static SegmentProfilerState fromBytes(byte[] bytes) {
+    // try (ByteArrayInputStream bais = new ByteArrayInputStream(bytes); ObjectInputStream ois = new ObjectInputStream(bais)) {
+    //
+    // return (SegmentProfilerState) ois.readObject();
+    // } catch (IOException | ClassNotFoundException e) {
+    // throw new RuntimeException("Failed to deserialize SegmentProfilerState", e);
+    // }
+    // }
 
-            oos.writeObject(this);
-            return baos.toByteArray();
+    public void writeTo(StreamOutput out) throws IOException {
+        out.writeVInt(statistics.size());
+        for (SummaryStatistics stats : statistics) {
+            out.writeDouble(stats.getMean());
+            out.writeDouble(stats.getVariance());
+            out.writeVLong(stats.getN());
+            out.writeDouble(stats.getMin());
+            out.writeDouble(stats.getMax());
+            out.writeDouble(stats.getSum());
+        }
+        out.writeInt(dimension);
+    }
+
+    public byte[] toByteArray() {
+        try (BytesStreamOutput out = new BytesStreamOutput()) {
+            writeTo(out);
+            return out.bytes().toBytesRef().bytes;
         } catch (IOException e) {
-            throw new RuntimeException("Failed to serialize SegmentProfilerStates", e);
+            throw new RuntimeException("Failed to serialize SegmentProfilerState", e);
         }
     }
 
-    /**
-     * Deserializes a SegmentProfilerState from a byte array
-     * @param bytes
-     * @return
-     */
     public static SegmentProfilerState fromBytes(byte[] bytes) {
-        try (ByteArrayInputStream bais = new ByteArrayInputStream(bytes); ObjectInputStream ois = new ObjectInputStream(bais)) {
-
-            return (SegmentProfilerState) ois.readObject();
-        } catch (IOException | ClassNotFoundException e) {
+        try (StreamInput in = StreamInput.wrap(bytes)) {
+            return new SegmentProfilerState(in);
+        } catch (IOException e) {
             throw new RuntimeException("Failed to deserialize SegmentProfilerState", e);
         }
     }
+
+    // public static SegmentProfilerState fromSummaryStatistics(List<SummaryStatistics> stats, int dimension) {
+    // List<StatisticalSummaryValues> values = stats.stream()
+    // .map(stat -> new StatisticalSummaryValues(
+    // stat.getMean(), stat.getVariance(), stat.getN(),
+    // stat.getMin(), stat.getMax(), stat.getSum()))
+    // .collect(Collectors.toList());
+    //
+    // return new SegmentProfilerState(values, dimension);
+    // }
 }

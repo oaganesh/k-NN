@@ -324,6 +324,6 @@ public class KNNIndexShard {
      * @return List of statistical summaries for each dimension
      */
     public List<StatisticalSummaryValues> profile() {
-        return profile("my_vector_field");
+        return profile("target_field");
     }
 }
