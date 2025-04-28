@@ -59,7 +59,9 @@ public final class KNN990ProfileStateReader {
             }
 
             byte[] stateBytes = readStateBytes(input, position, length);
-            return SegmentProfilerState.fromBytes(stateBytes);
+            // return SegmentProfilerState.fromBytes(stateBytes);
+            return SegmentProfilerState.deserialize(stateBytes);
+
         }
     }
 
