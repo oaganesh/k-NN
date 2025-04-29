@@ -139,7 +139,6 @@ public class KNNIndexShard {
                 final int dimensionId = i;
                 List<SummaryStatistics> transposed = new ArrayList<>();
 
-                // Safely collect statistics for this dimension from all segments
                 for (SegmentProfilerState state : segmentLevelProfilerStates) {
                     List<SummaryStatistics> stateStats = state.getStatistics();
                     if (dimensionId < stateStats.size()) {
