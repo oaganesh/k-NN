@@ -168,7 +168,7 @@ public class NativeEngines990KnnVectorsReader extends KnnVectorsReader {
         }
 
         if (knnCollector instanceof SegmentProfileKNNCollector) {
-            SegmentProfilerState segmentProfileState = KNN990ProfileStateReader.read(
+            SegmentProfilerState segmentProfileState = KNN990QuantizationStateReader.readProfilerState(
                 new SegmentProfileStateReadConfig(segmentReadState, field)
             );
             ((SegmentProfileKNNCollector) knnCollector).setSegmentProfilerState(segmentProfileState);

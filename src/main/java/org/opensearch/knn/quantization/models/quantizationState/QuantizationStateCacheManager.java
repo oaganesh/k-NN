@@ -45,7 +45,7 @@ public final class QuantizationStateCacheManager implements Closeable {
         final QuantizationState quantizationState = QuantizationStateCache.getInstance()
             .getQuantizationState(
                 quantizationStateReadConfig.getCacheKey(),
-                () -> KNN990QuantizationStateReader.read(quantizationStateReadConfig)
+                () -> KNN990QuantizationStateReader.readQuantizationState(quantizationStateReadConfig)
             );
         return quantizationState;
     }

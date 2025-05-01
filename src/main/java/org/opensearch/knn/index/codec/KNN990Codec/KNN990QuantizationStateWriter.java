@@ -7,6 +7,7 @@ package org.opensearch.knn.index.codec.KNN990Codec;
 
 import lombok.AllArgsConstructor;
 import lombok.Setter;
+import lombok.extern.log4j.Log4j2;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.SegmentWriteState;
@@ -22,11 +23,15 @@ import java.util.List;
 /**
  * Writes quantization states to off heap memory
  */
+@Log4j2
 public final class KNN990QuantizationStateWriter {
 
     private final IndexOutput output;
     private List<FieldQuantizationState> fieldQuantizationStates = new ArrayList<>();
     static final String NATIVE_ENGINES_990_KNN_VECTORS_FORMAT_QS_DATA = "NativeEngines990KnnVectorsFormatQSData";
+
+    private static final byte QUANTIZATION_STATE_MARKER = 0;
+    private static final byte SEGMENT_PROFILER_STATE_MARKER = 1;
 
     /**
      * Constructor
@@ -82,8 +87,10 @@ public final class KNN990QuantizationStateWriter {
     public void writeState(int fieldNumber, QuantizationState quantizationState) throws IOException {
         byte[] stateBytes = quantizationState.toByteArray();
         long position = output.getFilePointer();
+        output.writeByte(QUANTIZATION_STATE_MARKER);
         output.writeBytes(stateBytes, stateBytes.length);
-        fieldQuantizationStates.add(new FieldQuantizationState(fieldNumber, stateBytes, position));
+        int totalLength = stateBytes.length + 1;
+        fieldQuantizationStates.add(new FieldQuantizationState(fieldNumber, QUANTIZATION_STATE_MARKER,  stateBytes, position, totalLength));
     }
 
     /**
@@ -96,8 +103,18 @@ public final class KNN990QuantizationStateWriter {
     public void writeState(int fieldNumber, SegmentProfilerState segmentProfilerState) throws IOException {
         byte[] stateBytes = segmentProfilerState.toByteArray();
         long position = output.getFilePointer();
+        output.writeByte(SEGMENT_PROFILER_STATE_MARKER);
         output.writeBytes(stateBytes, stateBytes.length);
-        fieldQuantizationStates.add(new FieldQuantizationState(fieldNumber, stateBytes, position));
+        int totalLength = stateBytes.length + 1; // +1 for marker byte
+        fieldQuantizationStates.add(new FieldQuantizationState(
+                fieldNumber,
+                SEGMENT_PROFILER_STATE_MARKER,
+                stateBytes,
+                position,
+                totalLength
+        ));
+        log.debug("Wrote SegmentProfilerState: field={}, position={}, length={}",
+                fieldNumber, position, totalLength);
     }
 
     /**
@@ -107,22 +124,28 @@ public final class KNN990QuantizationStateWriter {
     public void writeFooter() throws IOException {
         long indexStartPosition = output.getFilePointer();
         output.writeInt(fieldQuantizationStates.size());
-        for (FieldQuantizationState fieldQuantizationState : fieldQuantizationStates) {
-            output.writeInt(fieldQuantizationState.fieldNumber);
-            output.writeInt(fieldQuantizationState.stateBytes.length);
-            output.writeVLong(fieldQuantizationState.position);
+        for (FieldQuantizationState state : fieldQuantizationStates) {
+            output.writeInt(state.fieldNumber);
+            output.writeByte(state.stateType);
+            output.writeInt(state.totalLength);
+            output.writeVLong(state.position);
+            log.debug("Wrote footer entry: field={}, type={}, length={}, position={}",
+                    state.fieldNumber, state.stateType, state.totalLength, state.position);
         }
         output.writeLong(indexStartPosition);
         output.writeInt(-1);
         CodecUtil.writeFooter(output);
     }
 
+
     @AllArgsConstructor
     private static class FieldQuantizationState {
         final int fieldNumber;
+        final byte stateType;
         final byte[] stateBytes;
         @Setter
         Long position;
+        int totalLength;
     }
 
     public void closeOutput() throws IOException {
