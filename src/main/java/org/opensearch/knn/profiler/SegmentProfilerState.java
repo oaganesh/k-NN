@@ -9,8 +9,21 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.extern.log4j.Log4j2;
 import org.apache.commons.math3.stat.descriptive.SummaryStatistics;
+import org.apache.lucene.search.DocIdSetIterator;
 import org.opensearch.knn.index.codec.util.KNNCodecUtil;
+import org.opensearch.knn.index.quantizationservice.QuantizationService;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
+import org.opensearch.knn.quantization.enums.ScalarQuantizationType;
+import org.opensearch.knn.quantization.models.quantizationParams.QuantizationParams;
+import org.opensearch.knn.quantization.models.quantizationParams.ScalarQuantizationParams;
+import org.opensearch.knn.quantization.models.quantizationState.MultiBitScalarQuantizationState;
+import org.opensearch.knn.quantization.models.quantizationState.OneBitScalarQuantizationState;
+import org.opensearch.knn.quantization.models.quantizationState.QuantizationState;
+import org.opensearch.knn.quantization.models.quantizationOutput.QuantizationOutput;
+import org.opensearch.knn.quantization.quantizer.MultiBitScalarQuantizer;
+import org.opensearch.knn.quantization.quantizer.OneBitScalarQuantizer;
+import org.opensearch.knn.quantization.quantizer.Quantizer;
+
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -19,6 +32,7 @@ import java.io.IOException;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.function.Supplier;
 
@@ -40,6 +54,13 @@ public class SegmentProfilerState implements Serializable {
 
     @Getter
     private final String segmentId;
+
+    @Getter
+    private final boolean quantizedStats;
+
+    public SegmentProfilerState(List<SummaryStatistics> statistics, int dimension, String segmentId) {
+        this(statistics, dimension, segmentId, false); // Default to original vectors
+    }
 
     /**
      * Profiles vectors in a segment by analyzing their statistical values
@@ -85,7 +106,7 @@ public class SegmentProfilerState implements Serializable {
 
         logDimensionStatistics(statistics, dimension, segmentId);
 
-        return new SegmentProfilerState(statistics, vectorValues.dimension(), segmentId);
+        return new SegmentProfilerState(statistics, vectorValues.dimension(), segmentId, false);
     }
 
     /**
@@ -170,5 +191,138 @@ public class SegmentProfilerState implements Serializable {
         } catch (IOException | ClassNotFoundException e) {
             throw new RuntimeException("Failed to deserialize SegmentProfilerState", e);
         }
+    }
+
+    public static SegmentProfilerState profileQuantizedVectors(
+            final Supplier<KNNVectorValues<?>> knnVectorValuesSupplier,
+            final String segmentId,
+            final QuantizationState quantizationState,
+            final QuantizationParams quantizationParams,
+            final QuantizationService quantizationService) throws IOException {
+
+        // Create appropriate quantizer based on the quantization type
+        ScalarQuantizationType sqType = null;
+        Quantizer<float[], byte[]> quantizer = null;
+
+        if (quantizationParams instanceof ScalarQuantizationParams) {
+            sqType = ((ScalarQuantizationParams) quantizationParams).getSqType();
+            switch (sqType) {
+                case ONE_BIT:
+                    quantizer = new OneBitScalarQuantizer();
+                    log.info("Using OneBitScalarQuantizer for profiling");
+                    break;
+                case TWO_BIT:
+                    quantizer = new MultiBitScalarQuantizer(2);
+                    log.info("Using MultiBitScalarQuantizer(2) for profiling");
+                    break;
+                case FOUR_BIT:
+                    quantizer = new MultiBitScalarQuantizer(4);
+                    log.info("Using MultiBitScalarQuantizer(4) for profiling");
+                    break;
+                default:
+                    log.warn("Unsupported quantization type: {}", sqType);
+                    return new SegmentProfilerState(new ArrayList<>(), 0, segmentId, true);
+            }
+        } else {
+            log.warn("Unsupported quantization params type: {}", quantizationParams.getClass().getName());
+            return new SegmentProfilerState(new ArrayList<>(), 0, segmentId, true);
+        }
+
+        // Get vector values
+        KNNVectorValues<?> vectorValues = knnVectorValuesSupplier.get();
+        if (vectorValues == null) {
+            return new SegmentProfilerState(new ArrayList<>(), 0, segmentId, true);
+        }
+
+        // Initialize first vector
+        if (vectorValues.nextDoc() == DocIdSetIterator.NO_MORE_DOCS) {
+            return new SegmentProfilerState(new ArrayList<>(), 0, segmentId, true);
+        }
+
+        // Get first vector and dimension
+        float[] firstVector = (float[]) vectorValues.getVector();
+        int dimension = firstVector.length;
+
+        // Determine bits per value and prepare stats
+        int bitsPerValue = sqType == ScalarQuantizationType.ONE_BIT ? 1 :
+                sqType == ScalarQuantizationType.TWO_BIT ? 2 : 4;
+        int valuesPerByte = 8 / bitsPerValue;
+        int mask = (1 << bitsPerValue) - 1;
+
+        log.info("Using {} bits per value for quantization profiling", bitsPerValue);
+
+        // Create statistics arrays
+        List<SummaryStatistics> originalStats = new ArrayList<>(dimension);
+        List<SummaryStatistics> quantizedStats = new ArrayList<>(dimension);
+
+        for (int i = 0; i < dimension; i++) {
+            originalStats.add(new SummaryStatistics());
+            quantizedStats.add(new SummaryStatistics());
+        }
+
+        // Process all vectors
+        int vectorCount = 0;
+        int[] valueCounts = new int[1 << bitsPerValue]; // Count occurrences of each value
+
+        do {
+            vectorCount++;
+            float[] vector = (float[]) vectorValues.getVector();
+
+            // Update original stats
+            for (int i = 0; i < dimension; i++) {
+                originalStats.get(i).addValue(vector[i]);
+            }
+
+            // Quantize using the actual quantizer
+            QuantizationOutput<byte[]> output = (QuantizationOutput<byte[]>) quantizationService.createQuantizationOutput(quantizationParams);
+            quantizer.quantize(vector, quantizationState, output);
+            byte[] quantized = output.getQuantizedVector();
+
+            // Analyze the quantized values
+            for (int byteIdx = 0; byteIdx < quantized.length; byteIdx++) {
+                int currentByte = quantized[byteIdx] & 0xFF;
+
+                for (int valueIdx = 0; valueIdx < valuesPerByte; valueIdx++) {
+                    int dimensionIdx = byteIdx * valuesPerByte + valueIdx;
+                    if (dimensionIdx >= dimension) break; // Don't exceed the dimension
+
+                    int shiftAmount = (valuesPerByte - 1 - valueIdx) * bitsPerValue;
+                    int value = (currentByte >> shiftAmount) & mask;
+
+                    quantizedStats.get(dimensionIdx).addValue(value);
+                    valueCounts[value]++;
+                }
+            }
+        } while (vectorValues.nextDoc() != DocIdSetIterator.NO_MORE_DOCS);
+
+        log.info("Processed {} vectors with {} dimensions", vectorCount, dimension);
+
+        // Log distribution of quantized values
+        log.info("Distribution of quantized values:");
+        for (int i = 0; i < valueCounts.length; i++) {
+            double percentage = vectorCount > 0 ?
+                    (double) valueCounts[i] / (vectorCount * dimension) * 100 : 0;
+            log.info("Value {}: {} occurrences ({}%)",
+                    i, valueCounts[i], String.format("%.2f", percentage));
+        }
+
+        // Log a sample of the dimension statistics
+        log.info("Sample dimension statistics:");
+        for (int i = 0; i < Math.min(5, dimension); i++) {
+            SummaryStatistics origStats = originalStats.get(i);
+            SummaryStatistics quantStats = quantizedStats.get(i);
+
+            log.info("Dimension {}: Original [min={}, max={}, mean={}], " +
+                            "Quantized [min={}, max={}, mean={}]",
+                    i,
+                    String.format("%.3f", origStats.getMin()),
+                    String.format("%.3f", origStats.getMax()),
+                    String.format("%.3f", origStats.getMean()),
+                    String.format("%.3f", quantStats.getMin()),
+                    String.format("%.3f", quantStats.getMax()),
+                    String.format("%.3f", quantStats.getMean()));
+        }
+
+        return new SegmentProfilerState(quantizedStats, dimension, segmentId, true);
     }
 }

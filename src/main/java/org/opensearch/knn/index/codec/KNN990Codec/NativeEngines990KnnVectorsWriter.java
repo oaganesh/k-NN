@@ -107,7 +107,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
                 field.getVectors()
             );
             final QuantizationState quantizationState = train(field.getFieldInfo(), knnVectorValuesSupplier, totalLiveDocs);
-            profile(field.getFieldInfo(), knnVectorValuesSupplier, totalLiveDocs);
+            profile(field.getFieldInfo(), knnVectorValuesSupplier, totalLiveDocs, quantizationState);
             // should skip graph building only for non quantization use case and if threshold is met
             if (quantizationState == null && shouldSkipBuildingVectorDataStructure(totalLiveDocs)) {
                 log.debug(
@@ -153,7 +153,7 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
         final QuantizationState quantizationState = train(fieldInfo, knnVectorValuesSupplier, totalLiveDocs);
 
         // Write the segment profile state to the directory
-        profile(fieldInfo, knnVectorValuesSupplier, totalLiveDocs);
+        profile(fieldInfo, knnVectorValuesSupplier, totalLiveDocs, quantizationState);
 
         // should skip graph building only for non quantization use case and if threshold is met
         if (quantizationState == null && shouldSkipBuildingVectorDataStructure(totalLiveDocs)) {
@@ -252,19 +252,56 @@ public class NativeEngines990KnnVectorsWriter extends KnnVectorsWriter {
 
         return quantizationState;
     }
+//
+//    private SegmentProfilerState profile(
+//        final FieldInfo fieldInfo,
+//        final Supplier<KNNVectorValues<?>> knnVectorValuesSupplier,
+//        final int totalLiveDocs
+//    ) throws IOException {
+//
+//        SegmentProfilerState segmentProfilerState = null;
+//        if (totalLiveDocs > 0) {
+//            initSegmentStateWriterIfNecessary();
+//            String segmentId = segmentWriteState.segmentInfo.name;
+//            SegmentProfilerState profileResultForSegment = SegmentProfilerState.profileVectors(knnVectorValuesSupplier, segmentId);
+//            segmentStateWriter.writeState(fieldInfo.getFieldNumber(), profileResultForSegment);
+//        }
+//
+//        return segmentProfilerState;
+//    }
 
     private SegmentProfilerState profile(
-        final FieldInfo fieldInfo,
-        final Supplier<KNNVectorValues<?>> knnVectorValuesSupplier,
-        final int totalLiveDocs
-    ) throws IOException {
+            final FieldInfo fieldInfo,
+            final Supplier<KNNVectorValues<?>> knnVectorValuesSupplier,
+            final int totalLiveDocs,
+            final QuantizationState quantizationState) throws IOException {
 
         SegmentProfilerState segmentProfilerState = null;
         if (totalLiveDocs > 0) {
             initSegmentStateWriterIfNecessary();
             String segmentId = segmentWriteState.segmentInfo.name;
-            SegmentProfilerState profileResultForSegment = SegmentProfilerState.profileVectors(knnVectorValuesSupplier, segmentId);
-            segmentStateWriter.writeState(fieldInfo.getFieldNumber(), profileResultForSegment);
+
+            // Choose profiling method based on whether quantization is used
+            final QuantizationService quantizationService = QuantizationService.getInstance();
+            if (quantizationState != null) {
+                // Get the quantization parameters
+                final QuantizationParams quantizationParams = quantizationService.getQuantizationParams(fieldInfo);
+
+                segmentProfilerState = SegmentProfilerState.profileQuantizedVectors(
+                        knnVectorValuesSupplier,
+                        segmentId,
+                        quantizationState,
+                        quantizationParams,
+                        quantizationService
+                );
+            } else {
+                segmentProfilerState = SegmentProfilerState.profileVectors(
+                        knnVectorValuesSupplier,
+                        segmentId
+                );
+            }
+
+            segmentStateWriter.writeState(fieldInfo.getFieldNumber(), segmentProfilerState);
         }
 
         return segmentProfilerState;

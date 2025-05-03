@@ -10,6 +10,7 @@ import org.apache.lucene.codecs.KnnFieldVectorsWriter;
 import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.index.ByteVectorValues;
 import org.apache.lucene.index.FloatVectorValues;
+import org.opensearch.knn.index.VectorDataType;
 
 import java.io.IOException;
 

@@ -141,8 +141,49 @@ public class KNNProfileResponse extends BroadcastResponse implements ToXContentO
             for (SegmentProfilerState state : shardProfileResult.segmentProfilerStateList) {
                 builder.startObject()
                     .field("segment_id", state.getSegmentId())
-                    .field("dimension", state.getDimension())
-                    .startArray("vector_statistics");
+                    .field("dimension", state.getDimension());
+                        //.field("quantized_stats", state.isQuantizedStats())
+                // Add quantization information
+                if (state.isQuantizedStats()) {
+                    builder.field("quantized_stats", true);
+
+                    // Determine quantization type from statistics
+                    // We can infer it from the max value - ONE_BIT max=1, TWO_BIT max=3, FOUR_BIT max=15
+                    double maxValue = 0;
+                    for (SummaryStatistics stats : state.getStatistics()) {
+                        maxValue = Math.max(maxValue, stats.getMax());
+                    }
+
+                    String quantizationType;
+                    int bitsPerValue;
+                    if (maxValue <= 1.0) {
+                        quantizationType = "ONE_BIT";
+                        bitsPerValue = 1;
+                    } else if (maxValue <= 3.0) {
+                        quantizationType = "TWO_BIT";
+                        bitsPerValue = 2;
+                    } else {
+                        quantizationType = "FOUR_BIT";
+                        bitsPerValue = 4;
+                    }
+
+                    builder.field("quantization_type", quantizationType)
+                            .field("bits_per_value", bitsPerValue)
+                            .field("compression_ratio", 32.0 / bitsPerValue) // 32-bit float to N-bit
+                            .field("storage_reduction_percentage", (1 - bitsPerValue/32.0) * 100);
+
+                    // Count dimensions with non-zero values (important for ONE_BIT)
+                    int nonZeroDimensions = 0;
+                    for (SummaryStatistics stats : state.getStatistics()) {
+                        if (stats.getMax() > 0) nonZeroDimensions++;
+                    }
+
+                    builder.field("non_zero_dimensions_percentage",
+                            (double)nonZeroDimensions / state.getDimension() * 100);
+                } else {
+                    builder.field("quantized_stats", false);
+                }
+                    builder.startArray("vector_statistics");
 
                 for (int i = 0; i < state.getStatistics().size(); i++) {
                     SummaryStatistics stats = state.getStatistics().get(i);
