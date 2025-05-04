@@ -41,6 +41,14 @@ public class SegmentProfilerState implements Serializable {
     @Getter
     private final String segmentId;
 
+    @Getter
+    private final boolean quantizedStats;
+
+    public SegmentProfilerState(List<SummaryStatistics> statistics, int dimension, String segmentId) {
+        this(statistics, dimension, segmentId, false);
+    }
+
+
     /**
      * Profiles vectors in a segment by analyzing their statistical values
      * @param knnVectorValuesSupplier

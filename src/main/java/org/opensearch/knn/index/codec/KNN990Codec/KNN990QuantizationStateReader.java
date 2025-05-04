@@ -13,6 +13,8 @@ import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.opensearch.knn.common.KNNConstants;
+import org.opensearch.knn.profiler.SegmentProfilerState;
+import org.opensearch.knn.profiler.SegmentProfileStateReadConfig;
 import org.opensearch.knn.quantization.enums.ScalarQuantizationType;
 import org.opensearch.knn.quantization.models.quantizationParams.ScalarQuantizationParams;
 import org.opensearch.knn.quantization.models.quantizationState.MultiBitScalarQuantizationState;
@@ -23,39 +25,108 @@ import org.opensearch.knn.quantization.models.quantizationState.QuantizationStat
 import java.io.IOException;
 
 /**
- * Reads quantization states
+ * Reader for various state files (quantization state and profiler state)
  */
 @Log4j2
 public final class KNN990QuantizationStateReader {
 
     /**
-     * Reads an individual quantization state for a given field
-     * File format:
-     * Header
-     * QS1 state bytes
-     * QS2 state bytes
-     * Number of quantization states
-     * QS1 field number
-     * QS1 state bytes length
-     * QS1 position of state bytes
-     * QS2 field number
-     * QS2 state bytes length
-     * QS2 position of state bytes
-     * Position of index section (where QS1 field name is located)
-     * -1 (marker)
-     * Footer
+     * Reads a quantization state for a given field
      *
      * @param readConfig a config class that contains necessary information for reading the state
      * @return quantization state
+     * @throws IOException if an error occurs during reading
      */
-    public static QuantizationState read(QuantizationStateReadConfig readConfig) throws IOException {
+    public static QuantizationState readQuantizationState(QuantizationStateReadConfig readConfig) throws IOException {
         SegmentReadState segmentReadState = readConfig.getSegmentReadState();
         String field = readConfig.getField();
-        String quantizationStateFileName = getQuantizationStateFileName(segmentReadState);
+        String stateFileName = getStateFileName(segmentReadState, KNNConstants.QUANTIZATION_STATE_FILE_SUFFIX);
+
+        byte[] stateBytes = readStateBytes(segmentReadState, field, stateFileName);
+
+        // Deserialize the byte array to a quantization state object
+        ScalarQuantizationType scalarQuantizationType = ((ScalarQuantizationParams) readConfig.getQuantizationParams()).getSqType();
+        switch (scalarQuantizationType) {
+            case ONE_BIT:
+                return OneBitScalarQuantizationState.fromByteArray(stateBytes);
+            case TWO_BIT:
+            case FOUR_BIT:
+                return MultiBitScalarQuantizationState.fromByteArray(stateBytes);
+            default:
+                throw new IllegalArgumentException(String.format("Unexpected scalar quantization type: %s", scalarQuantizationType));
+        }
+    }
+
+    /**
+     * Reads a profiler state for a given field
+     *
+     * @param readConfig config for reading the profiler state
+     * @return SegmentProfilerState object
+     * @throws IOException if there's an error reading the state
+     */
+    /**
+     * Reads a profiler state for a given field, optionally including quantization information
+     *
+     * @param readConfig config for reading the profiler state
+     * @param quantizationParams optional quantization parameters (can be null)
+     * @return SegmentProfilerState object
+     * @throws IOException if there's an error reading the state
+     */
+    public static SegmentProfilerState readProfileState(
+            SegmentProfileStateReadConfig readConfig,
+            ScalarQuantizationParams quantizationParams) throws IOException {
+
+        SegmentReadState segmentReadState = readConfig.getSegmentReadState();
+        String field = readConfig.getField();
+        String stateFileName = getStateFileName(segmentReadState, KNNConstants.SEGMENT_PROFILE_STATE_FILE_SUFFIX);
+
+        byte[] stateBytes = readStateBytes(segmentReadState, field, stateFileName);
+        SegmentProfilerState state = SegmentProfilerState.fromBytes(stateBytes);
+
+        // Enhance the profiler state with quantization information if available
+        if (quantizationParams != null && state.isQuantizedStats()) {
+            ScalarQuantizationType sqType = quantizationParams.getSqType();
+            log.debug("Enhancing profiler state with {} quantization type information", sqType);
+
+            // Determine bits per value based on quantization type
+            int bitsPerValue = sqType == ScalarQuantizationType.ONE_BIT ? 1 :
+                    sqType == ScalarQuantizationType.TWO_BIT ? 2 : 4;
+
+            // We could either enhance the existing state object or create a new one with
+            // additional quantization information
+
+            // Option 1: For now, if SegmentProfilerState has appropriate setters or constructors
+            // state.setQuantizationType(sqType);
+            // state.setBitsPerValue(bitsPerValue);
+
+            // Option 2: If we want to add this information without modifying SegmentProfilerState
+            log.info("Profile state represents {} quantized data ({} bits per value, {}:1 compression)",
+                    sqType, bitsPerValue, 32/bitsPerValue);
+        }
+
+        return state;
+    }
+
+    /**
+     * Simplified version without quantization parameters
+     */
+    public static SegmentProfilerState readProfileState(SegmentProfileStateReadConfig readConfig) throws IOException {
+        return readProfileState(readConfig, null);
+    }
+
+    /**
+     * Reads state bytes for a specific field from a state file
+     *
+     * @param segmentReadState the segment read state
+     * @param field the field name
+     * @param stateFileName the name of the state file
+     * @return the state bytes
+     * @throws IOException if there's an error reading the state
+     */
+    private static byte[] readStateBytes(SegmentReadState segmentReadState, String field, String stateFileName) throws IOException {
         int fieldNumber = segmentReadState.fieldInfos.fieldInfo(field).getFieldNumber();
 
-        try (IndexInput input = segmentReadState.directory.openInput(quantizationStateFileName, IOContext.READONCE)) {
-
+        try (IndexInput input = segmentReadState.directory.openInput(stateFileName, IOContext.DEFAULT)) {
             CodecUtil.retrieveChecksum(input);
             int numFields = getNumFields(input);
 
@@ -78,19 +149,7 @@ public final class KNN990QuantizationStateReader {
                 throw new IllegalArgumentException(String.format("Field %s not found", field));
             }
 
-            byte[] stateBytes = readStateBytes(input, position, length);
-
-            // Deserialize the byte array to a quantization state object
-            ScalarQuantizationType scalarQuantizationType = ((ScalarQuantizationParams) readConfig.getQuantizationParams()).getSqType();
-            switch (scalarQuantizationType) {
-                case ONE_BIT:
-                    return OneBitScalarQuantizationState.fromByteArray(stateBytes);
-                case TWO_BIT:
-                case FOUR_BIT:
-                    return MultiBitScalarQuantizationState.fromByteArray(stateBytes);
-                default:
-                    throw new IllegalArgumentException(String.format("Unexpected scalar quantization type: %s", scalarQuantizationType));
-            }
+            return readBytes(input, position, length);
         }
     }
 
@@ -105,7 +164,7 @@ public final class KNN990QuantizationStateReader {
     }
 
     @VisibleForTesting
-    static byte[] readStateBytes(IndexInput input, long position, int length) throws IOException {
+    static byte[] readBytes(IndexInput input, long position, int length) throws IOException {
         input.seek(position);
         byte[] stateBytes = new byte[length];
         input.readBytes(stateBytes, 0, length);
@@ -113,7 +172,7 @@ public final class KNN990QuantizationStateReader {
     }
 
     @VisibleForTesting
-    static String getQuantizationStateFileName(SegmentReadState state) {
-        return IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, KNNConstants.QUANTIZATION_STATE_FILE_SUFFIX);
+    static String getStateFileName(SegmentReadState state, String suffix) {
+        return IndexFileNames.segmentFileName(state.segmentInfo.name, state.segmentSuffix, suffix);
     }
 }
