@@ -122,12 +122,6 @@ public class KNNProfileResponse extends BroadcastResponse {
 
     List<KNNIndexShardProfileResult> shardProfileResults;
 
-    // private final List<KNNIndexShardProfileResult> shardProfileResults;
-
-    public List<KNNIndexShardProfileResult> getShardProfileResults() {
-        return shardProfileResults;
-    }
-
     public KNNProfileResponse() {}
 
     // public KNNProfileResponse(StreamInput in) throws IOException {
@@ -164,11 +158,6 @@ public class KNNProfileResponse extends BroadcastResponse {
 
         this.shardProfileResults = shardProfileResults;
     }
-
-    // @Override
-    // public void writeTo(StreamOutput streamOutput) throws IOException {
-    // throw new UnsupportedOperationException("This method is not available");
-    // }
 
     @Override
     protected void addCustomXContentFields(XContentBuilder builder, Params params) throws IOException {
